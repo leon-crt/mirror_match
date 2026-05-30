@@ -1,5 +1,9 @@
 import torch
 
+MAX_X = 924
+MIN_X = 98
+MAX_Y = 124
+
 def save_checkpoint(epoch, model, optimizer, loss, path):
     checkpoint = {
         'epoch': epoch + 1, # Save the next epoch number to start from
@@ -15,6 +19,16 @@ def avg(l):
     for i in l:
         sum += i
     return sum / len(l)
+
+def format_pred(t:torch.Tensor):
+    res = [None] * len(t)
+    for i in range(len(t)):
+        if t[i] > 0:
+            res[i] = 1
+        else:
+            res[i] = 0
+
+    return str(res)[1:-1].replace(' ', '')
 
 class EarlyStopping():
     def __init__(self, min_delta, tolerance):
@@ -32,3 +46,45 @@ class EarlyStopping():
             if self.counter >= self.tolerance:
                 return True
         return False
+
+class PlayerFeatures():
+    def __init__(self, posx, posy, health, meter, stun, isStunned, hit, thrown, inputs):
+        self.posX = posx
+        self.posY = posy
+        self.health = health
+        self.meter = meter
+        self.stun = stun
+        self.hit = hit
+        self.isStunned = isStunned
+        self.thrown = thrown
+        self.inputs = inputs
+    
+    def normalize(self):
+        self.posX = (self.posX - MIN_X) / (MAX_X - MIN_X)
+        self.posY = self.posY / MAX_Y
+        self.health = self.health / 161
+        self.meter = self.meter / 336
+        self.stun = self.stun / 70
+
+class GameState():
+    def __init__(self, s:str):
+        self.feats = s.split(sep=',')
+        self.feats = [int(x) for x in self.feats]
+        self.P1 = PlayerFeatures(*self.feats[:8], None)
+        self.P2 = PlayerFeatures(*self.feats[8:16], self.feats[16:])
+    
+    def normalize(self):
+        self.P1.normalize()
+        self.P2.normalize()
+        # p1 features
+        self.feats[0] = self.P1.posX
+        self.feats[1] = self.P1.posY
+        self.feats[2] = self.P1.health
+        self.feats[3] = self.P1.meter
+        self.feats[4] = self.P1.stun
+        # p2 features
+        self.feats[8] = self.P2.posX
+        self.feats[9] = self.P2.posY
+        self.feats[10] = self.P2.health
+        self.feats[11] = self.P2.meter
+        self.feats[12] = self.P2.stun

@@ -35,12 +35,16 @@ class LSTM(nn.Module):
         self.fc_out = nn.Linear(hidden_size, output_size)
         self.act = nn.ReLU()
 
-    def forward(self, input_seq:torch.Tensor, hidden_in, mem_in, pad_seqs_lens):
+    def forward(self, input_seq:torch.Tensor, hidden_in, mem_in, pad_seqs_lens = None):
         # Pass input sequence through the input MLP and pack it
-        input_vec = pack_padded_sequence(self.input_mlp(input_seq), pad_seqs_lens, batch_first=True, enforce_sorted=False)
+        if pad_seqs_lens != None:
+            input_vec = pack_padded_sequence(self.input_mlp(input_seq), pad_seqs_lens, batch_first=True, enforce_sorted=False)
+        else:
+            input_vec = self.input_mlp(input_seq)
         # Pass the input MLP output through the LSTM block
         output, (hidden_out, mem_out) = self.lstm(input_vec, (hidden_in, mem_in))
-        output, _ = pad_packed_sequence(output, batch_first=True)
+        if pad_seqs_lens != None:
+            output, _ = pad_packed_sequence(output, batch_first=True)
         # Pass the LSTM output through residual blocks
         x = self.act(self.res_blocks(output))
         
