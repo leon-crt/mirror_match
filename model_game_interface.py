@@ -9,8 +9,9 @@ import win32con
 import sys
 import csv
 import numpy as np
-import pathlib
+import matplotlib.pyplot as plt
 import torch
+import datetime
 
 from util import GameState, format_pred
 from model import LSTM
@@ -29,6 +30,11 @@ match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size).
 hidden = torch.zeros(1, 1, hidden_size, device=device)
 memory = torch.zeros(1, 1, hidden_size, device=device)
 
+# load model
+ch_path = 'checkpoints/checkpoint_final'
+checkpoint = torch.load(ch_path)
+match_lstm.load_state_dict(checkpoint['model_state_dict'])
+
 # test LSTM
 # state = GameState('424,0,161,24,0,0,0,0,600,0,161,77,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0')
 # state.normalize()
@@ -36,43 +42,58 @@ memory = torch.zeros(1, 1, hidden_size, device=device)
 
 # start emulator
 emu_proc = subprocess.Popen(["./fbneo/fcadefbneo.exe", "sfiii3nr1", "./model_game_interface.lua"])
-even = True
+
+output_vec = []
+time_vec = []
 # establish tcp connection
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST,PORT))
-    # game loop
-    while True:
-        s.listen()
-        conn, addr = s.accept()
-        with conn:
-            while True:
-                try:
-                    data = conn.recv(1024) 
-                    # catch graceful disconnection
-                    if not data:
-                        print(f"Client {addr} disconnected gracefully.")
+    s.settimeout(5)
+    try:
+        # game loop
+        while True:
+            s.listen()
+            conn, addr = s.accept()
+            with conn:
+                while True:
+                    try:
+                        data = conn.recv(1024) 
+                        # catch graceful disconnection
+                        if not data:
+                            print(f"Client {addr} disconnected gracefully.")
+                            break
+                        elab_time_st = datetime.datetime.now()
+                        state = GameState(data.decode('utf-8'))
+                        state.normalize()
+                        lstm_input = torch.tensor(state.feats, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                        # feed to lstm
+                        player_inputs, hidden, memory = match_lstm(lstm_input, hidden, memory)
+                        player_inputs = player_inputs.squeeze(0).squeeze(0)
+                        output_vec.append(player_inputs.tolist())
+                        elab_time_end = datetime.datetime.now() - elab_time_st
+                        # send through the socket as a comma separated list of numbers
+                        conn.send(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
+                        time_vec.append(elab_time_end)
+                        # if even:
+                        #     conn.send(bytes('0,0,0,0,0,0,0,1,0,0,0,1\r\n', "utf-8"))
+                        # else:
+                        #     conn.send(bytes('0,0,0,0,0,0,0,0,0,0,0,0\r\n', "utf-8"))
+                        # even = not even
+                        print(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
+                    except (ConnectionResetError, BrokenPipeError) as e:
+                        # catch abrupt network cut
+                        print(f"Connection with {addr} was interrupted abruptly: {e}")
                         break
-                    state = GameState(data.decode('utf-8'))
-                    state.normalize()
-                    lstm_input = torch.tensor(state.feats, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                    # feed to lstm
-                    player_inputs, hidden, memory = match_lstm(lstm_input, hidden, memory)
-                    player_inputs = player_inputs.squeeze(0).squeeze(0)
-
-                    # send through the socket as a comma separated list of numbers
-
-                    conn.send(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
-                    # if even:
-                    #     conn.send(bytes('0,0,0,0,0,0,0,1,0,0,0,1\r\n', "utf-8"))
-                    # else:
-                    #     conn.send(bytes('0,0,0,0,0,0,0,0,0,0,0,0\r\n', "utf-8"))
-                    # even = not even
-                    print(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
-                except (ConnectionResetError, BrokenPipeError) as e:
-                    # catch abrupt network cut
-                    print(f"Connection with {addr} was interrupted abruptly: {e}")
-                    break
-
+    except:
+        time_vec = np.array(time_vec)
+        print(f'max time: {time_vec.max()}' )
+        print(f'min time: {time_vec.min()}' )
+        print(f'avg time: {time_vec.mean()}' )
+        # output_vec = np.array(output_vec)
+        # for i in range(len(output_vec)):
+        #     plt.hist(output_vec[:,i])
+        #     plt.title(str(i))
+        #     plt.show()
 
 
 

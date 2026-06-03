@@ -37,7 +37,7 @@ class LSTM(nn.Module):
 
     def forward(self, input_seq:torch.Tensor, hidden_in, mem_in, pad_seqs_lens = None):
         # Pass input sequence through the input MLP and pack it
-        if pad_seqs_lens != None:
+        if pad_seqs_lens != None: # If the pad_seqs_lens is None then we are in inference mode
             input_vec = pack_padded_sequence(self.input_mlp(input_seq), pad_seqs_lens, batch_first=True, enforce_sorted=False)
         else:
             input_vec = self.input_mlp(input_seq)
@@ -45,8 +45,10 @@ class LSTM(nn.Module):
         output, (hidden_out, mem_out) = self.lstm(input_vec, (hidden_in, mem_in))
         if pad_seqs_lens != None:
             output, _ = pad_packed_sequence(output, batch_first=True)
-        # Pass the LSTM output through residual blocks
-        x = self.act(self.res_blocks(output))
+            # Pass the LSTM output through residual blocks
+            x = self.res_blocks(output) # we are training so do not apply sigmoid as it will already be in loss
+        else:
+            x = self.act(self.res_blocks(output)) # we are in inference mode so apply sigmoid to output 
         
         # Pass the output of the residual blocks through the final linear layer
         return self.fc_out(x), hidden_out, mem_out

@@ -47,18 +47,23 @@ class MatchDataset(Dataset):
         return player_data
     
     def __getitem__(self, idx):
-        raw_data = pd.read_csv(self.dir_path + self.file_names[idx])
-        p1_data = raw_data.loc[raw_data['Player'] == 'P1'].reset_index()
-        p2_data = raw_data.loc[raw_data['Player'] == 'P2'].reset_index()
-        targets = p1_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']].copy()
+        filename = self.file_names[idx]
+        raw_data = pd.read_csv(self.dir_path + filename)
+        player_side = filename[0]
+        ch_names = str.split(filename, '-')
+        target_character = ch_names[int(player_side)][:-1]
+        opponent_character = ch_names[3 - int(player_side)][:-1]
+        target_data = raw_data.loc[raw_data['Player'] == target_character].reset_index()
+        opponent_data = raw_data.loc[raw_data['Player'] ==  opponent_character].reset_index()
+        labels = target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']].copy()
 
         # normalize scalar features
-        p1_data = self.norm_scalar_features(p1_data)
-        p2_data = self.norm_scalar_features(p2_data)
+        target_data = self.norm_scalar_features(target_data)
+        opponent_data = self.norm_scalar_features(opponent_data)
         
-        states = pd.concat([p1_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], p2_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']]], axis=1)
+        states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']]], axis=1)
     
-        return torch.tensor(states.values, dtype=torch.float32), torch.tensor(targets.values, dtype=torch.float32)
+        return torch.tensor(states.values, dtype=torch.float32), torch.tensor(labels.values, dtype=torch.float32)
 
     def get_max_seq_len(self):
         return self.max_seq_len

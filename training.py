@@ -37,7 +37,7 @@ out_size = 12 # number of pressable buttons same as targets
 # Create the LSTM model
 match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size).to(device)
 optimizer = optim.Adam(match_lstm.parameters(), lr=learning_rate)
-loss_fn = nn.MSELoss()
+loss_fn = nn.BCEWithLogitsLoss()
 avg_train_losses = []
 avg_val_losses = []
 
