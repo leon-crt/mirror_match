@@ -33,6 +33,7 @@ batch_size = 32
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 128
 out_size = 12 # number of pressable buttons same as targets
+print(f'using device: {device}')
 
 # Create the LSTM model
 match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size).to(device)
@@ -48,6 +49,7 @@ es = EarlyStopping(min_delta=10, tolerance=5)
 # Run training loop for each epoch
 for epoch in range(nepochs):
     
+    print(f'Epoch: {epoch}')
     match_lstm.train()
     train_loss_logger = []
     val_loss_logger = []

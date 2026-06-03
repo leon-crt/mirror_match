@@ -46,9 +46,11 @@ class LSTM(nn.Module):
         if pad_seqs_lens != None:
             output, _ = pad_packed_sequence(output, batch_first=True)
             # Pass the LSTM output through residual blocks
-            x = self.res_blocks(output) # we are training so do not apply sigmoid as it will already be in loss
+            x = self.act(self.res_blocks(output)) 
+            # Pass the output of the residual blocks through the final linear layer
+            return self.fc_out(x), hidden_out, mem_out # we are training so do not apply sigmoid as it will already be in loss
         else:
-            x = self.act(self.res_blocks(output)) # we are in inference mode so apply sigmoid to output 
+            x = self.act(self.res_blocks(output))
+            # Pass the output of the residual blocks through the final linear layer
+            return torch.sigmoid(self.fc_out(x)), hidden_out, mem_out # we are in inference mode so apply sigmoid to output
         
-        # Pass the output of the residual blocks through the final linear layer
-        return self.fc_out(x), hidden_out, mem_out
