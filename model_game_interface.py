@@ -32,7 +32,7 @@ memory = torch.zeros(1, 1, hidden_size, device=device)
 
 # load model
 ch_path = 'checkpoints/checkpoint_final'
-checkpoint = torch.load(ch_path)
+checkpoint = torch.load(ch_path, map_location=device)
 match_lstm.load_state_dict(checkpoint['model_state_dict'])
 
 # test LSTM
@@ -45,10 +45,11 @@ emu_proc = subprocess.Popen(["./fbneo/fcadefbneo.exe", "sfiii3nr1", "./model_gam
 
 output_vec = []
 time_vec = []
+# even = False
 # establish tcp connection
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST,PORT))
-    s.settimeout(5)
+    s.settimeout(2)
     try:
         # game loop
         while True:
@@ -74,26 +75,27 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         # send through the socket as a comma separated list of numbers
                         conn.send(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
                         time_vec.append(elab_time_end)
+                        print(format_pred(player_inputs))
                         # if even:
                         #     conn.send(bytes('0,0,0,0,0,0,0,1,0,0,0,1\r\n', "utf-8"))
                         # else:
                         #     conn.send(bytes('0,0,0,0,0,0,0,0,0,0,0,0\r\n', "utf-8"))
                         # even = not even
-                        print(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
+
                     except (ConnectionResetError, BrokenPipeError) as e:
                         # catch abrupt network cut
                         print(f"Connection with {addr} was interrupted abruptly: {e}")
                         break
-    except:
+    except(TimeoutError):
         time_vec = np.array(time_vec)
         print(f'max time: {time_vec.max()}' )
         print(f'min time: {time_vec.min()}' )
         print(f'avg time: {time_vec.mean()}' )
-        # output_vec = np.array(output_vec)
-        # for i in range(len(output_vec)):
-        #     plt.hist(output_vec[:,i])
-        #     plt.title(str(i))
-        #     plt.show()
+        output_vec = np.array(output_vec)
+        for i in range(len(output_vec)-1):
+            plt.hist(output_vec[:,i])
+            plt.title(str(i))
+            plt.show()
 
 
 

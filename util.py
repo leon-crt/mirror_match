@@ -1,8 +1,9 @@
 import torch
 
-MAX_X = 924
-MIN_X = 98
-MAX_Y = 124
+MAX_X = 928
+MIN_X = 93
+MAX_Y = 226
+MIN_Y = -42
 
 def save_checkpoint(epoch, model, optimizer, loss, path):
     checkpoint = {
@@ -23,7 +24,7 @@ def avg(l):
 def format_pred(t:torch.Tensor):
     res = [None] * len(t)
     for i in range(len(t)):
-        if t[i] > 0.5:
+        if t[i] > 0.05:
             res[i] = 1
         else:
             res[i] = 0
@@ -61,14 +62,14 @@ class PlayerFeatures():
     
     def normalize(self):
         self.posX = (self.posX - MIN_X) / (MAX_X - MIN_X)
-        self.posY = self.posY / MAX_Y
+        self.posY = (self.posY - MIN_Y) / (MAX_Y - MIN_Y)
         self.health = self.health / 161
         self.meter = self.meter / 336
         self.stun = self.stun / 70
 
 class GameState():
     def __init__(self, s:str):
-        self.feats = s.split(sep=',')
+        self.feats = s.split(sep=',')[-29:-1]
         self.feats = [int(x) for x in self.feats]
         self.P1 = PlayerFeatures(*self.feats[:8], None)
         self.P2 = PlayerFeatures(*self.feats[8:16], self.feats[16:])

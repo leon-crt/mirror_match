@@ -5,6 +5,11 @@ from torch.nn.utils.rnn import pad_sequence
 import pandas as pd
 import torch
 
+MAX_X = 928
+MIN_X = 93
+MAX_Y = 226
+MIN_Y = -42
+
 class MatchDataset(Dataset):
     def __init__(self, dir_path):
         self.dir_path = dir_path
@@ -28,9 +33,9 @@ class MatchDataset(Dataset):
             min_posY[i] = raw_data['PosY'].min()
             min_posX[i] = raw_data['PosX'].min()
         self.max_posX = max_posX.max()
-        self.min_posX = min_posY.min()
+        self.min_posX = min_posX.min()
         self.max_posY = max_posY.max()
-        self.min_posY = min_posX.min()
+        self.min_posY = min_posY.min()
         self.max_stun = max_stun.max()
         self.max_meter = max_meter.max()
         self.max_seq_len = int(len_seqs.max())
@@ -39,8 +44,8 @@ class MatchDataset(Dataset):
         return len(self.file_names)
 
     def norm_scalar_features(self, player_data):
-        player_data['PosX'] = player_data['PosX'] - self.min_posX / self.max_posX - self.min_posX
-        player_data['PosY'] = player_data['PosY'] - self.min_posY / self.max_posY - self.min_posY
+        player_data['PosX'] = (player_data['PosX'] - MIN_X) / (MAX_X- MIN_X)
+        player_data['PosY'] = (player_data['PosY'] - MIN_Y) / (MAX_Y - MIN_Y)
         player_data['Health'] = player_data['Health'] / player_data['Health'].max()
         player_data['Meter'] = player_data['Meter'] / self.max_meter
         player_data['Stun'] = player_data['Stun'] / self.max_stun
