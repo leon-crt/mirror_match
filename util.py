@@ -24,7 +24,7 @@ def avg(l):
 def format_pred(t:torch.Tensor):
     res = [None] * len(t)
     for i in range(len(t)):
-        if t[i] > 0.05:
+        if t[i] > 0.2:
             res[i] = 1
         else:
             res[i] = 0

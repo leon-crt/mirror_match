@@ -9,6 +9,8 @@ CanRecoverFromStunP1, CanRecoverFromStunP2 = false, false
 HitStateP1, HitStateP2 = nil, nil
 RoundNumber = 0
 Host, Port = "127.0.0.1", 42069
+Timeout = 0.0015
+Desynced = false
 
 function Split(inputstr, sep)
   if sep == nil then
@@ -72,8 +74,17 @@ function FormatState(p1, p2)
     local p1_data = string.format("%d,%d,%d,%d,%d,%d,%d,%d", p1.posX[#p1.posX], p1.posY[#p1.posY], p1.health[#p1.health], p1.super[#p1.super], p1.stun[#p1.stun], p1.isStunned[#p1.isStunned], p1.hit[#p1.hit], p1.thrown[#p1.thrown])
     local p2_data = string.format("%d,%d,%d,%d,%d,%d,%d,%d", p2.posX[#p2.posX], p2.posY[#p2.posY], p2.health[#p2.health], p2.super[#p2.super], p2.stun[#p2.stun], p2.isStunned[#p2.isStunned], p2.hit[#p2.hit], p2.thrown[#p2.thrown])
     local p2_inp = p2.inputs[#p2.inputs]
-    local p2_inputs = string.format("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", p2_inp["Left"], p2_inp["Up"], p2_inp["Right"], p2_inp["Down"], p2_inp["Weak Punch"], p2_inp["Medium Punch"], p2_inp["Strong Punch"], p2_inp["Weak Kick"], p2_inp["Medium Kick"], p2_inp["Strong Kick"], p2_inp["Start"], p2_inp["Coin"])
-    return p1_data .. ',' .. p2_data .. ',' .. p2_inputs
+    local p2_inputs = string.format("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", p2_inp["Left"] or 0, p2_inp["Up"] or 0, p2_inp["Right"] or 0, p2_inp["Down"] or 0, p2_inp["Weak Punch"] or 0, p2_inp["Medium Punch"] or 0, p2_inp["Strong Punch"] or 0, p2_inp["Weak Kick"] or 0, p2_inp["Medium Kick"] or 0, p2_inp["Strong Kick"] or 0, p2_inp["Start"] or 0, p2_inp["Coin"] or 0)
+    
+    -- add padding to make every message the same length
+    local raw_string = p1_data .. ',' .. p2_data .. ',' .. p2_inputs .. ','
+    local padded_string = ''
+    local padding_len = 99 - #raw_string
+    for _=0,padding_len do
+        padded_string = padded_string .. '#'
+    end
+    padded_string = padded_string .. raw_string
+    return padded_string
 end
 
 BToN = { [true] = 1, [false] = 0}
@@ -100,6 +111,7 @@ function StateData:new (chid, suid, posx, posy, health, previousHealth, super, m
     o.superBarLength = maxSuperBar or 0
     o.previousStun = previousStun or 0
     o.previousHealth = previousHealth or 0
+    o.previousInput = Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
     o.posX = posx or {}
     o.posY = posy or {}
     o.health = health or {}
@@ -115,6 +127,7 @@ end
 function StateData:wipe()
     self.previousStun = self.stun[#self.stun]
     self.previousHealth = self.health[#self.health]
+    self.previousInput = self.inputs[#self.inputs]
     self.posX = {}
     self.posY = {}
     self.health = {}
@@ -129,6 +142,7 @@ end
 function StateData:update(posx, posy, health, super, stun, isStunned, hit, thrown, inputs)
     self.previousStun = stun
     self.previousHealth = health
+    self.previousInput = self.inputs[#self.inputs] or  Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
     table.insert(self.posX, posx)
     table.insert(self.posY, posy)
     table.insert(self.health, health)
@@ -207,47 +221,61 @@ function GameInterface()
 
         -- Send the game state to model interface
         local gamestate = FormatState(P1,P2)
-        local _, err = Tcp:send(gamestate)
-        if err == "closed"
+        local _, errmsg = Tcp:send(gamestate)
+        if errmsg == "closed"
         then
             Tcp:close()
             Tcp = assert(socket.tcp())
             Tcp:connect(Host, Port)
             Tcp:send(gamestate)
-         end
+        end
         
         -- Receive P1's input
-        local raw_p1_input = Tcp:receive('*l')
+        local raw_p1_input, err
+        if Desynced then
+            -- very naive way of emptying out the socket so that we dont get a desync between client and server
+            Tcp:settimeout(0)
+            local partial
+            _, err, partial = Tcp:receive(100)
+            if err == 'timeout' and partial ~= nil 
+            then
+                raw_p1_input = string.sub(partial, #partial-23, #partial)
+                err = nil
+            else
+                Tcp:settimeout(Timeout)
+                raw_p1_input, err = Tcp:receive('*l')
+            end
+            Tcp:settimeout(Timeout)
+            Desynced = false
+        else
+            raw_p1_input, err = Tcp:receive('*l')
+        end
 
-        local split_p1_input = Split(raw_p1_input, ',')
-        local labeled_p1_input = {["Left"] = false, ['Up']=false, ['Right'] = false, ['Down'] = false, ['Weak Punch'] = false, ['Medium Punch'] = false, ['Hard Punch'] = false, ['Weak Kick'] = false, ['Medium Kick'] = false, ['Hard Kick'] = false, ['Start']=false,['Coin']=false}
-        
-        labeled_p1_input['Left'] = SToB[split_p1_input[1]]
-        labeled_p1_input['Up'] = SToB[split_p1_input[2]]
-        labeled_p1_input['Right'] = SToB[split_p1_input[3]]
-        labeled_p1_input['Down'] = SToB[split_p1_input[4]]
-        
-        labeled_p1_input['Weak Punch'] = SToB[split_p1_input[5]]
-        labeled_p1_input['Medium Punch'] = SToB[split_p1_input[6]]
-        labeled_p1_input['Hard Punch'] = SToB[split_p1_input[7]]
-        
-        labeled_p1_input['Weak Kick'] = SToB[split_p1_input[8]]
-        labeled_p1_input['Medium Kick'] = SToB[split_p1_input[9]]
-        labeled_p1_input['Hard Kick'] = SToB[split_p1_input[10]]
-        
-        labeled_p1_input['Start'] = SToB[split_p1_input[11]]
-        labeled_p1_input['Coin'] = SToB[split_p1_input[12]]
+        local split_p1_input
+        -- if timeout repeat last input else get from server response
+        if err == "timeout"
+        then
+            split_p1_input = P1.previousInput
+            Desynced = true
+        else
+            split_p1_input = Split(raw_p1_input, ',')
+        end
+        local button_order = {'Left','Up','Right','Down','Weak Punch','Medium Punch','Strong Punch','Weak Kick','Medium Kick','Strong Kick','Start','Coin'}
 
         -- format and set P1's input in the game
-        for input, value in pairs(labeled_p1_input)
+        for i, button_name in ipairs(button_order)
         do
             -- change only p1's inputs
-            local prefix = "P1"
-            combined_input[prefix .. " " .. input] = value
+            local prefix = 'P1 '
+            combined_input[prefix .. button_name] = SToB[split_p1_input[i]]
         end
 
         --{P2 Right=true, P2 Medium Punch=false, Service=false, P2 Coin=false, P1 Coin=false, P1 Down=true, P1 Strong Punch=false, P2 Weak Punch=false, P1 Weak Punch=false, P1 Medium Punch=false, P1 Start=false, P1 Medium Kick=false, P1 Right=false, P2 Up=false, P1 Strong Kick=false, Diagnostic=false, Region=1, P2 Down=false, P2 Left=false, P1 Left=true, P2 Medium Kick=false, Fake Dip=0, P2 Strong Punch=false, P1 Weak Kick=false, P2 Weak Kick=false, P1 Up=false, P2 Strong Kick=false, P2 Start=false, Reset=false}
         joypad.set(combined_input)
+
+        -- Save 
+        P1.previousInput = P1.inputs[#P1.inputs] or Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
+        table.insert(P1.inputs, P1.inputs)
 
         -- Format everything and write to file
         if Frame_counter % Buff_size == 0
@@ -292,6 +320,8 @@ function GameInterface()
         P2.previousStun = 0
         P1.previousHealth = 161
         P2.previousHealth = 161
+        P1.previousInput = Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
+        P2.previousInput = Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
         StunnedP1, StunnedP2 = false, false
         CanRecoverFromStunP1, CanRecoverFromStunP2 = false, false
         HitStateP1, HitStateP2 = nil, nil
@@ -303,12 +333,8 @@ function GameInterface()
     end
 end
 
-function GetHumanInput()
-
-
-end
-
 -- Establish TCP socket connection
 Tcp = assert(socket.tcp())
 Tcp:connect(Host, Port)
+Tcp:settimeout(Timeout)
 emu.registerbefore(GameInterface)
