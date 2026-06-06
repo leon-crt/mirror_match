@@ -47,6 +47,28 @@ class EarlyStopping():
             if self.counter >= self.tolerance:
                 return True
         return False
+    
+def ComputeMetrics(pred, target, batch_size, out_size):
+    TP = [0] * out_size
+    FP = [0] * out_size
+    TN = [0] * out_size
+    FN = [0] * out_size
+    for b in range(batch_size):
+            for i in range(len(pred)):
+                for k in range(out_size):
+                    pred = round(pred[b,i,k].item())
+                    target = int(target[b,i,k].item())
+                    if pred == 0 and target == 0:
+                        TN[k] += 1
+                    elif pred == 0 and target == 1:
+                        FN[k] += 1
+                    elif pred == 1 and target == 1:
+                        TP[k] += 1
+                    elif pred == 1 and target == 0:
+                        FP[k] += 1
+    prec = TP / (TP - FP)
+    rec = TP / (TP + FN)
+    return prec, rec
 
 class PlayerFeatures():
     def __init__(self, posx, posy, health, meter, stun, isStunned, hit, thrown, inputs):
