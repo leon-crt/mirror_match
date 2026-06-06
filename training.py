@@ -157,7 +157,8 @@ for epoch in range(nepochs):
         plt.close()
     
     if es.early_stop(avg_val_losses[-1]):
+        print('Early Stopping!')
         break
     
-    
-save_checkpoint(nepochs, match_lstm, optimizer, loss, checkpoint_dir + 'checkpoint_final')
+save_checkpoint(epoch, match_lstm, optimizer, loss, checkpoint_dir + 'checkpoint_final')
+print(f'Finished training at epoch: {epoch}')
