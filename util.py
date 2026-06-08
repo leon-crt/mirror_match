@@ -51,35 +51,12 @@ class EarlyStopping():
         return False
     
 def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
-    TP = np.zeros(out_size)
-    FP = np.zeros(out_size)
-    TN = np.zeros(out_size)
-    FN = np.zeros(out_size)
-    for b in range(batch_size):
-            for i in range(pred_seq.shape[1]):
-                for k in range(out_size):
-                    pred = round(pred_seq[b,i,k].item())
-                    target = int(target_seq[b,i,k].item())
-                    if pred == 0 and target == 0:
-                        TN[k] += 1
-                    elif pred == 0 and target == 1:
-                        FN[k] += 1
-                    elif pred == 1 and target == 1:
-                        TP[k] += 1
-                    elif pred == 1 and target == 0:
-                        FP[k] += 1
+    pred_seq = pred_seq.detach().numpy()
+    pred_seq = pred_seq.round()
+    target_seq = target_seq.detach().numpy()
 
-    prec = np.zeros(out_size)
-    rec = np.zeros(out_size)
-    for i in range(out_size):
-        if TP[i] + FP[i] == 0:
-            prec[i] == 0.0
-        else:
-            prec[i] = TP[i] / (TP[i] + FP[i])
-        if TP[i] + FN[i] == 0:
-            rec[i] = 0.0
-        else:
-            rec[i] = TP[i] / (TP[i] + FN[i])
+    prec = precision_score(target_seq, pred_seq)
+    rec = recall_score(target_seq, pred_seq)
     
     return prec, rec
 
