@@ -51,12 +51,19 @@ class EarlyStopping():
         return False
     
 def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
-    pred_seq = pred_seq.cpu().detach().numpy()
-    pred_seq = pred_seq.round()
-    target_seq = target_seq.cpu().detach().numpy()
-
-    prec = precision_score(target_seq, pred_seq)
-    rec = recall_score(target_seq, pred_seq)
+    pred_np = pred_seq.cpu().detach().numpy()
+    target_np = target_seq.cpu().detach().numpy()
+    
+    # 2. Flatten 3D sequential data [batch, seq, classes] -> 2D matrix [samples, classes]
+    # This resolves the "unknown is not supported" error
+    pred_flat = pred_np.reshape(-1, out_size)
+    target_flat = target_np.reshape(-1, out_size).astype(int)
+    
+    # 3. Correct thresholding order (Assuming pred_seq contains probabilities)
+    # Convert decimals to 0 or 1, THEN cast to integer
+    pred_binary = (pred_flat >= 0.5).astype(int)
+    prec = precision_score(target_flat, pred_binary, average=None, zero_division=0)
+    rec = recall_score(target_flat, pred_binary, average=None, zero_division=0)
     
     return prec, rec
 
