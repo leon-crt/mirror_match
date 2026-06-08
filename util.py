@@ -48,16 +48,16 @@ class EarlyStopping():
                 return True
         return False
     
-def ComputeMetrics(pred, target, batch_size, out_size):
+def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
     TP = [0] * out_size
     FP = [0] * out_size
     TN = [0] * out_size
     FN = [0] * out_size
     for b in range(batch_size):
-            for i in range(len(pred)):
+            for i in range(pred_seq.shape[1]):
                 for k in range(out_size):
-                    pred = round(pred[b,i,k].item())
-                    target = int(target[b,i,k].item())
+                    pred = round(pred_seq[b,i,k].item())
+                    target = int(target_seq[b,i,k].item())
                     if pred == 0 and target == 0:
                         TN[k] += 1
                     elif pred == 0 and target == 1:

@@ -72,6 +72,10 @@ for epoch in range(nepochs):
         data_pred, _, _ = match_lstm(traj_block, hidden, memory, traj_lens)
         
         # Calculate the loss
+        # Compute evaluation metrics
+        approx_preds = torch.sigmoid(data_pred)
+        prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
+        
         raw_loss = loss_fn(data_pred, target_seq_block)
         mask = torch.arange(traj_pad.shape[1], device=device)[None, :] < torch.tensor(traj_lens, device=device)[:, None]
         mask = mask.unsqueeze(-1)
@@ -83,10 +87,6 @@ for epoch in range(nepochs):
         loss.backward()
         optimizer.step()
 
-        # Compute evaluation metrics
-        approx_preds = torch.sigmoid(data_pred)
-        prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
-        
         # Log the training loss and metrics
         train_loss_logger.append(loss.item())
         train_prec_logger.append(prec)
