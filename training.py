@@ -55,8 +55,8 @@ for epoch in range(nepochs):
     print(f'Epoch: {epoch}')
     match_lstm.train()
     train_loss_logger, val_loss_logger = [], []
-    train_prec_logger, val_prec_logger = [], []
-    train_rec_logger, val_rec_logger = [], []
+    val_prec_logger = []
+    val_rec_logger = []
 
     # Perform training loop
     for traj_pad, targets_pad, traj_lens, targets_lens in dl_train:
@@ -72,10 +72,6 @@ for epoch in range(nepochs):
         data_pred, _, _ = match_lstm(traj_block, hidden, memory, traj_lens)
         
         # Calculate the loss
-        # Compute evaluation metrics
-        approx_preds = torch.sigmoid(data_pred)
-        prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
-        
         raw_loss = loss_fn(data_pred, target_seq_block)
         mask = torch.arange(traj_pad.shape[1], device=device)[None, :] < torch.tensor(traj_lens, device=device)[:, None]
         mask = mask.unsqueeze(-1)
@@ -87,22 +83,17 @@ for epoch in range(nepochs):
         loss.backward()
         optimizer.step()
 
-        # Log the training loss and metrics
+        # Log the training loss
         train_loss_logger.append(loss.item())
-        train_prec_logger.append(prec)
-        train_rec_logger.append(rec)
 
     avg_train_losses.append(avg(train_loss_logger))
-    avg_train_prec.append(avg(train_prec_logger))
-    avg_train_rec.append(avg(train_rec_logger))
     print('============= Training ===============')
     print(f'Average Loss Value: {avg_train_losses[-1]}')
-    print(f'Average Precision Value: {avg_train_prec[-1]}')
-    print(f'Average Recall Value: {avg_train_rec[-1]}')
 
     # perform validation loop
     match_lstm.eval()
     with torch.no_grad():
+        sample_counter = 0
         for traj_pad, targets_pad, traj_lens, targets_lens in dl_val:
             
             # Pass the whole sequence of data at once
@@ -122,15 +113,18 @@ for epoch in range(nepochs):
             mask = mask.unsqueeze(-1)
             masked_loss = raw_loss * mask
             loss = masked_loss.sum() / mask.sum()
+            
+            # Log the training loss
+            val_loss_logger.append(loss.item())
 
             # Compute Metrics
-            approx_preds = torch.sigmoid(data_pred)
-            prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
-            
-            # Log the training loss and metrics
-            val_loss_logger.append(loss.item())
-            val_prec_logger.append(prec)
-            val_rec_logger.append(rec)
+            if sample_counter % (len(dl_val) / 10) == 0:
+                approx_preds = torch.sigmoid(data_pred)
+                prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
+                val_prec_logger.append(prec)
+                val_rec_logger.append(rec)
+
+            sample_counter += 1
 
         avg_val_losses.append(avg(val_loss_logger))
         avg_val_prec.append(avg(val_prec_logger))
