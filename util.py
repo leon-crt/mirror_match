@@ -51,9 +51,9 @@ class EarlyStopping():
         return False
     
 def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
-    pred_seq = pred_seq.detach().numpy()
+    pred_seq = pred_seq.cpu().detach().numpy()
     pred_seq = pred_seq.round()
-    target_seq = target_seq.detach().numpy()
+    target_seq = target_seq.cpu().detach().numpy()
 
     prec = precision_score(target_seq, pred_seq)
     rec = recall_score(target_seq, pred_seq)
