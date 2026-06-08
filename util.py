@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+from sklearn.metrics import precision_score, recall_score
 
 MAX_X = 928
 MIN_X = 93
@@ -49,10 +51,10 @@ class EarlyStopping():
         return False
     
 def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
-    TP = [0] * out_size
-    FP = [0] * out_size
-    TN = [0] * out_size
-    FN = [0] * out_size
+    TP = np.zeros(out_size)
+    FP = np.zeros(out_size)
+    TN = np.zeros(out_size)
+    FN = np.zeros(out_size)
     for b in range(batch_size):
             for i in range(pred_seq.shape[1]):
                 for k in range(out_size):
@@ -66,8 +68,19 @@ def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
                         TP[k] += 1
                     elif pred == 1 and target == 0:
                         FP[k] += 1
-    prec = TP / (TP - FP)
-    rec = TP / (TP + FN)
+
+    prec = np.zeros(out_size)
+    rec = np.zeros(out_size)
+    for i in range(out_size):
+        if TP[i] + FP[i] == 0:
+            prec[i] == 0.0
+        else:
+            prec[i] = TP[i] / (TP[i] + FP[i])
+        if TP[i] + FN[i] == 0:
+            rec[i] = 0.0
+        else:
+            rec[i] = TP[i] / (TP[i] + FN[i])
+    
     return prec, rec
 
 class PlayerFeatures():
