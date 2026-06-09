@@ -44,6 +44,7 @@ loss_fn = nn.BCEWithLogitsLoss()
 avg_train_losses, avg_val_losses = [], []
 avg_train_prec, avg_val_prec = [], []
 avg_train_rec, avg_val_rec = [], []
+avg_macro_prec, avg_macro_rec = [], []
 
 # initialize early stopping
 es = EarlyStopping(min_delta=0.05, tolerance=5)
@@ -129,13 +130,15 @@ for epoch in range(nepochs):
         avg_val_losses.append(avg(val_loss_logger))
         avg_val_prec.append(avg(val_prec_logger))
         avg_val_rec.append(avg(val_rec_logger))
+        avg_macro_prec.append(avg(avg_val_prec))
+        avg_macro_rec.append(avg(avg_val_rec))
         print('============= Validation ===============')
         print(f'Average Loss Value: {avg_val_losses[-1]}')
         print(f'Average Precision Value: {avg_val_prec[-1]}')
         print(f'Average Recall Value: {avg_val_rec[-1]}')
 
 
-    if (epoch+1) % 100 == 0:
+    if (epoch+1) % 10 == 0:
         # save weight checkpoint
         filename = 'checkpoint_' + str(epoch)
         save_checkpoint(epoch, match_lstm, optimizer, loss, checkpoint_dir + filename)
@@ -149,7 +152,16 @@ for epoch in range(nepochs):
         plt.title('Loss at epoch ' + str(epoch))
         plt.savefig(loss_plots_dir + 'loss_' + str(epoch))
         plt.close()
-    
+        plt.figure()
+        plt.plot(avg_macro_prec, label='average macro precision')
+        plt.plot(avg_macro_rec, label='average macro recall')
+        plt.xlabel("Epochs")
+        plt.ylabel("Metric Value")
+        plt.legend()
+        plt.title(f'Precision & Recall until epoch: {epoch}')
+        plt.savefig(loss_plots_dir + 'metrics_' + str(epoch))
+        plt.close()
+
     if es.early_stop(avg_val_losses[-1]):
         print('Early Stopping!')
         break
