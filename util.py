@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from sklearn.metrics import precision_score, recall_score
+from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 MAX_X = 928
 MIN_X = 93
@@ -50,7 +50,7 @@ class EarlyStopping():
                 return True
         return False
     
-def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
+def ComputeMetrics(pred_seq: torch.Tensor, target_seq, out_size):
     pred_np = pred_seq.cpu().detach().numpy()
     target_np = target_seq.cpu().detach().numpy()
     
@@ -64,8 +64,9 @@ def ComputeMetrics(pred_seq: torch.Tensor, target_seq, batch_size, out_size):
     pred_binary = (pred_flat >= 0.5).astype(int)
     prec = precision_score(target_flat, pred_binary, average=None, zero_division=0)
     rec = recall_score(target_flat, pred_binary, average=None, zero_division=0)
+    acc = accuracy_score(target_flat, pred_flat)
     
-    return prec, rec
+    return prec, rec, acc
 
 class PlayerFeatures():
     def __init__(self, posx, posy, health, meter, stun, isStunned, hit, thrown, inputs):

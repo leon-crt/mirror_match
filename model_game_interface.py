@@ -19,9 +19,6 @@ from model import LSTM
 HOST = "127.0.0.1"
 PORT = 42069
 
-# TODO:
-#       - emulator crashes
-
 # lstm initialization
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 128
@@ -31,7 +28,7 @@ hidden = torch.zeros(1, 1, hidden_size, device=device)
 memory = torch.zeros(1, 1, hidden_size, device=device)
 
 # load model
-ch_path = 'checkpoints/checkpoint_final'
+ch_path = 'checkpoints/checkpoint_489'
 checkpoint = torch.load(ch_path, map_location=device)
 match_lstm.load_state_dict(checkpoint['model_state_dict'])
 
@@ -74,11 +71,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         output_vec.append(format_pred(player_inputs))
                         # send through the socket as a comma separated list of numbers
                         conn.send(bytes(format_pred(player_inputs) + '\r\n', "utf-8"))
-                        # if even:
-                        #     conn.send(bytes('0,0,0,0,0,0,0,1,0,0,0,1\r\n', "utf-8"))
-                        # else:
-                        #     conn.send(bytes('0,0,0,0,0,0,0,0,0,0,0,0\r\n', "utf-8"))
-                        # even = not even
+                        
                         elab_time_end = datetime.datetime.now() - elab_time_st
                         time_vec.append(elab_time_end)
 

@@ -42,9 +42,10 @@ loss_fn = nn.BCEWithLogitsLoss()
 
 # metrics loggers
 avg_train_losses, avg_val_losses = [], []
-avg_train_prec, avg_val_prec = [], []
-avg_train_rec, avg_val_rec = [], []
-avg_macro_prec, avg_macro_rec = [], []
+avg_val_prec = []
+avg_val_acc = []
+avg_val_rec = []
+avg_macro_prec, avg_macro_rec, avg_macro_acc = [], [], []
 
 # initialize early stopping
 es = EarlyStopping(min_delta=0.05, tolerance=5)
@@ -58,6 +59,7 @@ for epoch in range(nepochs):
     train_loss_logger, val_loss_logger = [], []
     val_prec_logger = []
     val_rec_logger = []
+    val_acc_logger = []
 
     # Perform training loop
     for traj_pad, targets_pad, traj_lens, targets_lens in dl_train:
@@ -121,21 +123,24 @@ for epoch in range(nepochs):
             # Compute Metrics
             if sample_counter % (len(dl_val) / 10) == 0:
                 approx_preds = torch.sigmoid(data_pred)
-                prec, rec = ComputeMetrics(approx_preds, target_seq_block, batch_size, out_size)
+                prec, rec, acc = ComputeMetrics(approx_preds, target_seq_block, out_size)
                 val_prec_logger.append(prec)
                 val_rec_logger.append(rec)
+                val_acc_logger.append(acc)
 
             sample_counter += 1
 
         avg_val_losses.append(avg(val_loss_logger))
         avg_val_prec.append(avg(val_prec_logger))
         avg_val_rec.append(avg(val_rec_logger))
+        avg_val_acc.append(avg(val_acc_logger))
         avg_macro_prec.append(avg(avg_val_prec[-1]))
         avg_macro_rec.append(avg(avg_val_rec[-1]))
         print('============= Validation ===============')
         print(f'Average Loss Value: {avg_val_losses[-1]}')
         print(f'Average Precision Value: {avg_val_prec[-1]}')
         print(f'Average Recall Value: {avg_val_rec[-1]}')
+        print(f'Average Accuracy Value: {avg_val_acc[-1]}')
 
 
     if (epoch+1) % 10 == 0:
@@ -155,6 +160,7 @@ for epoch in range(nepochs):
         plt.figure()
         plt.plot(avg_macro_prec, label='average macro precision')
         plt.plot(avg_macro_rec, label='average macro recall')
+        plt.plot(avg_val_acc, label='average accuracy')
         plt.xlabel("Epochs")
         plt.ylabel("Metric Value")
         plt.legend()
