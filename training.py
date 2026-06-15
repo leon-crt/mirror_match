@@ -19,7 +19,7 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
-full_dataset = MatchDataset('data/Makoto2/Akuma1/train/')
+full_dataset = MatchDataset('data/Makoto2/')
 dataset_train, dataset_val = torch.utils.data.random_split(full_dataset, [0.8, 0.2])
 
 dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
@@ -27,7 +27,7 @@ dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
 
 # Define hyperparameters
 learning_rate = 1e-4 
-nepochs = 500  # Maybe use loss threshold to stop automatically
+nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 32
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
@@ -48,7 +48,7 @@ avg_val_rec = []
 avg_macro_prec, avg_macro_rec, avg_macro_acc = [], [], []
 
 # initialize early stopping
-es = EarlyStopping(min_delta=0.05, tolerance=5)
+es = EarlyStopping(min_delta=0.0001, tolerance=5)
 
 # seq have shape [batch_size, seq_len, feat_num]
 # Run training loop for each epoch
