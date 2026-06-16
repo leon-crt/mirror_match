@@ -64,7 +64,7 @@ def ComputeMetrics(pred_seq: torch.Tensor, target_seq, out_size):
     pred_binary = (pred_flat >= 0.5).astype(int)
     prec = precision_score(target_flat, pred_binary, average=None, zero_division=0)
     rec = recall_score(target_flat, pred_binary, average=None, zero_division=0)
-    acc = accuracy_score(target_flat, pred_flat)
+    acc = accuracy_score(target_flat, pred_binary)
     
     return prec, rec, acc
 
