@@ -13,7 +13,6 @@ from model import LSTM
 from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 
 # TODO: 
-#       - implement early stopping based on val loss [test]
 #       - implement the ground truth being the autoregressive lstm input
 
 checkpoint_dir = 'checkpoints/'

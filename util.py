@@ -23,10 +23,10 @@ def avg(l):
         sum += i
     return sum / len(l)
 
-def format_pred(t:torch.Tensor):
+def format_pred(t:torch.Tensor, threshold):
     res = [None] * len(t)
     for i in range(len(t)):
-        if t[i] > 0.2:
+        if t[i] > threshold:
             res[i] = 1
         else:
             res[i] = 0

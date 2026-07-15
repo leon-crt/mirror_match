@@ -1,8 +1,12 @@
+require("lua_libs/draw")
+require("lua_libs/input_history")
+require("lua_libs/gamestate")
+
 package.path = "lua_libs/luasocket/?.lua;"
 package.cpath = "lua_libs/socket/core.dll;" .. "lua_libs/mime/core.dll;"
 local socket = require('socket')
 
-Frame_counter = 1
+frame_number = 1
 Buff_size = 100
 StunnedP1, StunnedP2 = false, false
 CanRecoverFromStunP1, CanRecoverFromStunP2 = false, false
@@ -11,6 +15,8 @@ RoundNumber = 0
 Host, Port = "127.0.0.1", 42069
 Timeout = 0.0015
 Desynced = false
+Screen_width = 383
+Input_history_enabled = true
 
 function Split(inputstr, sep)
   if sep == nil then
@@ -83,7 +89,7 @@ function FormatState(p1, p2)
     for _=0,padding_len do
         padded_string = padded_string .. '#'
     end
-    padded_string = padded_string .. raw_string
+    padded_string = raw_string .. padded_string
     return padded_string
 end
 
@@ -169,14 +175,10 @@ function GameInterface()
     local hitP1, hitP2 = 0, 0
     local beingThrownP1, beingThrownP2
     local stateP1, stateP2
-
     -- Get current game phase
     local in_match = memory.readbyte(0x020154A7)  -- 1 = match intro, 2 = after round start, 9 = character select, 6 = end of round, 8 = transition between rounds
 
-    if in_match == 9
-    then
-        -- for now do nothing but maybe could auto select the characters and speed up to round start
-    elseif in_match == 2 -- after round start
+    if in_match == 2 -- after round start
     then
         -- Extract P1 and P2 state values
         posXP1, posYP1 = memory.readwordsigned(0x02068CD0), memory.readwordsigned(0x02068CD4)
@@ -236,8 +238,8 @@ function GameInterface()
             -- very naive way of emptying out the socket so that we dont get a desync between client and server
             Tcp:settimeout(0)
             local partial
-            _, err, partial = Tcp:receive(100)
-            if err == 'timeout' and partial ~= nil 
+            _, err, partial = Tcp:receive(1024)
+            if (err == 'timeout') and (partial ~= nil and #partial >= 23)
             then
                 raw_p1_input = string.sub(partial, #partial-23, #partial)
                 err = nil
@@ -273,23 +275,36 @@ function GameInterface()
         --{P2 Right=true, P2 Medium Punch=false, Service=false, P2 Coin=false, P1 Coin=false, P1 Down=true, P1 Strong Punch=false, P2 Weak Punch=false, P1 Weak Punch=false, P1 Medium Punch=false, P1 Start=false, P1 Medium Kick=false, P1 Right=false, P2 Up=false, P1 Strong Kick=false, Diagnostic=false, Region=1, P2 Down=false, P2 Left=false, P1 Left=true, P2 Medium Kick=false, Fake Dip=0, P2 Strong Punch=false, P1 Weak Kick=false, P2 Weak Kick=false, P1 Up=false, P2 Strong Kick=false, P2 Start=false, Reset=false}
         joypad.set(combined_input)
 
+        if Input_history_enabled
+        then
+            input_history_update(input_history[1], "P1", combined_input)
+            input_history_update(input_history[2], "P2", combined_input)
+        end
         -- Save 
         P1.previousInput = P1.inputs[#P1.inputs] or Split('0,0,0,0,0,0,0,0,0,0,0,0', ',')
         table.insert(P1.inputs, P1.inputs)
 
         -- Format everything and write to file
-        if Frame_counter % Buff_size == 0
+        if frame_number % Buff_size == 0
         then
             -- empty out the buffer classes so it doesnt slow everything down
             P1:wipe()
             P2:wipe()
         end
 
+        -- draw input history
+        if Input_history_enabled 
+        then
+            input_history_draw(input_history[1], 4, 49, false)
+            input_history_draw(input_history[2], Screen_width - 4, 49, true)
+        end
+
         -- Increase homemade framecounter
-        Frame_counter = Frame_counter + 1
+        frame_number = frame_number + 1
 
     elseif in_match == 6 and P1.posX[1] ~= nil -- if round has just ended and classes are not empty just write them to file
     then
+        RoundNumber = RoundNumber + 1
         -- make sure that the player that lost has their health reduced to 0
         local finalHealthP1, finalHealthP2 = P1.health[#P1.health], P2.health[#P2.health]
         if finalHealthP1 < finalHealthP2
@@ -311,6 +326,9 @@ function GameInterface()
         P1:update(P1.posX[#P1.posX], P1.posY[#P1.posY], finalHealthP1, P1.super[#P1.super], P1.stun[#P1.stun], P1.isStunned[#P1.isStunned], hitP1, P1.thrown[#P1.thrown], P1.inputs[#P1.inputs])
         P2:update(P2.posX[#P2.posX], P2.posY[#P2.posY], finalHealthP2, P2.super[#P2.super], P2.stun[#P2.stun], P2.isStunned[#P2.isStunned], hitP2, P2.thrown[#P2.thrown], P2.inputs[#P2.inputs])
 
+        -- Send the last state to the handler
+        local gamestate = FormatState(P1,P2)
+
         -- Reset global round specific variables
         P1:wipe()
         P2:wipe()
@@ -325,9 +343,18 @@ function GameInterface()
         StunnedP1, StunnedP2 = false, false
         CanRecoverFromStunP1, CanRecoverFromStunP2 = false, false
         HitStateP1, HitStateP2 = nil, nil
+        frame_number = 1
 
-        RoundNumber = RoundNumber + 1
-        Frame_counter = 1
+        gamestate = gamestate:sub(1, #gamestate -1) .. 'R' -- To signal the end of the round    
+
+        local _, errmsg = Tcp:send(gamestate)
+        if errmsg == "closed"
+        then
+            Tcp:close()
+            Tcp = assert(socket.tcp())
+            Tcp:connect(Host, Port)
+            Tcp:send(gamestate)
+        end
     else
         return nil
     end
@@ -337,4 +364,9 @@ end
 Tcp = assert(socket.tcp())
 Tcp:connect(Host, Port)
 Tcp:settimeout(Timeout)
+-- Load savestate
+local fs = savestate.create("./savestates/CPU_Yang_lvl_2.fs")
+savestate.load(fs)
+emu.speedmode('turbo')
+
 emu.registerbefore(GameInterface)
