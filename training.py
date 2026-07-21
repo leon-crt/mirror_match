@@ -22,7 +22,7 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
-full_dataset = MatchDataset('data/Makoto2/')
+full_dataset = MatchDataset('data/Makoto2/Akuma1/train/')
 dataset_train, dataset_val = torch.utils.data.random_split(full_dataset, [0.8, 0.2])
 
 dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
@@ -71,8 +71,8 @@ for epoch in range(nepochs):
         traj_block = traj_pad.to(device)
         target_seq_block = targets_pad.to(device)
 
-        hidden = torch.zeros(1, traj_pad.shape[1], hidden_size, device=device)
-        memory = torch.zeros(1, traj_pad.shape[1], hidden_size, device=device)
+        hidden = torch.zeros(2, traj_pad.shape[1], hidden_size, device=device)
+        memory = torch.zeros(2, traj_pad.shape[1], hidden_size, device=device)
 
         # Pass the input sequence through the LSTM
         data_pred, _, _ = match_lstm(traj_block, hidden, memory, traj_lens)
