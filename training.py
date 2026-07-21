@@ -14,6 +14,10 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 
 # TODO: 
 #       - implement the ground truth being the autoregressive lstm input
+#       - increase batch size, learning rate
+#       - increase model complexity
+#       - look into modifying weights for directions and buttons in data processing
+#       - look into feature analysis
 
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
