@@ -29,7 +29,7 @@ class LSTM(nn.Module):
                                        nn.ReLU(),
                                        nn.Linear(4 * input_size, hidden_size))
         
-        self.lstm = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=2, batch_first=True)
+        self.lstm = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=1, batch_first=True)
         blocks = [ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)]
         self.res_blocks = nn.Sequential(*blocks)
         self.fc_out = nn.Linear(hidden_size, output_size)

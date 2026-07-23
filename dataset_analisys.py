@@ -1,40 +1,71 @@
 import pandas as pd
 import os
 import numpy as np
+import torch
+import matplotlib.pyplot as plt
 
-path = 'data/Makoto2/Akuma3/'
-filelist = os.listdir(path)
+from data_preprocessing import MatchDataset
 
-file_num = len(filelist)
-min_posY = np.zeros(file_num)
-min_posX = np.zeros(file_num)
-max_posX = np.zeros(file_num)
-max_posY = np.zeros(file_num)
-max_health = np.zeros(file_num)
-max_stunP1, max_stunP2 = np.zeros(file_num), np.zeros(file_num)
-max_meterP1, max_meterP2 = np.zeros(file_num), np.zeros(file_num)
-for i in range(file_num):
-    raw_data = pd.read_csv(path + filelist[i])
-    posY = raw_data['PosY']
-    posX = raw_data['PosX']
-    p1_data = raw_data.loc[raw_data['Player'] == 'P1']
-    p2_data = raw_data.loc[raw_data['Player'] == 'P2']
-    min_posY[i] = posY.min()
-    min_posX[i] = posX.min()
-    max_posY[i] = posY.max()
-    max_posX[i] = posX.max()
-    max_health[i] = raw_data['Health'].max()
-    max_stunP1[i] = p1_data['Stun'].max()
-    max_stunP2[i] = p2_data['Stun'].max()
-    max_meterP1[i] = p1_data['Meter'].max()
-    max_meterP2[i] = p2_data['Meter'].max()
+# arguments
+path = './data/Makoto2/'
+flatten_folders = False
 
-print('min posy: ' + str(min_posY.min()))
-print(f'max posy: {max_posY.max()}')
-print(f'min posx: {min_posX.min()}')
-print(f'max posx: {max_posX.max()}')
-print(f'max health: {max_health.max()}')
-print(f'max stun P1: {max_stunP1.max()}')
-print(f'max stun P2: {max_stunP2.max()}')
-print(f'max meter P1: {max_meterP1.max()}') 
-print(f'max meter P2: {max_meterP2.max()}') 
+if flatten_folders:
+    files = os.listdir(path)
+
+    print("Moving all files from subfolders to main folder")
+    for folder in files:
+        for file in os.listdir(path + folder):
+            os.rename(path + folder + '/' + file, path + file)
+
+    print("Deleting empty sub folders")
+    for folder in files:
+        os.rmdir(path + folder)
+    
+dataset = MatchDataset(path)
+
+x_features_mean = []
+x_features_std = []
+
+x_state_max = []
+x_state_mins = []
+
+player_inputs_count = np.zeros(12)
+opponent_inputs_count = np.zeros(12)
+
+print("Computing stats")
+for x_features, y_features in dataset:
+    state_feats = x_features[:,:16].numpy()
+    x_features_mean.append(np.mean(state_feats,0))
+    x_state_max.append(np.max(state_feats,0))
+    x_state_mins.append(np.min(state_feats,0))
+    for feature in y_features:
+        player_inputs_count += feature.numpy()
+    for feature in x_features:
+        opponent_inputs_count += feature[-12:].numpy()
+
+
+# Plotting input counts
+input_fig, (pl, opp) = plt.subplots(1,2, sharey=True)
+plt.setp((pl,opp), xticks=range(0,12), xticklabels=['left', 'up', 'right', 'down', 'lp', 'mp', 'hp', 'lk', 'mk', 'hk', 'start', 'coin'])
+input_fig.set_figwidth(11)
+pl.bar(range(0,12),player_inputs_count)
+pl.set_title("Player")
+opp.bar(range(0,12),opponent_inputs_count)
+opp.set_title("Opponent")
+input_fig.suptitle("Total Number of Button Presses")
+
+total_bp_pl = player_inputs_count.sum()
+probs_bp_pl = [bp/total_bp_pl for bp in player_inputs_count]
+
+total_bp_opp = opponent_inputs_count.sum()
+probs_bp_opp = [bp/total_bp_opp for bp in opponent_inputs_count]
+
+print(f"means of the state features: {list(np.mean(x_features_mean,0))}")
+print(f"max values of state features: {list(np.max(x_state_max,0))}")
+print(f"min values of state features: {list(np.min(x_state_mins,0))}")
+print(f"button press distribution for player inputs: {list(probs_bp_pl)}")
+print(f"button press distribution for opponent inputs: {list(probs_bp_opp)}")
+
+plt.tight_layout()
+plt.show()

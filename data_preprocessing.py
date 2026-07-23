@@ -63,8 +63,8 @@ class MatchDataset(Dataset):
         labels = target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']].copy()
 
         # normalize scalar features
-        target_data = self.norm_scalar_features(target_data)
-        opponent_data = self.norm_scalar_features(opponent_data)
+        # target_data = self.norm_scalar_features(target_data)
+        # opponent_data = self.norm_scalar_features(opponent_data)
         
         states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']]], axis=1)
     

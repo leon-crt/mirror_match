@@ -367,6 +367,6 @@ Tcp:settimeout(Timeout)
 -- Load savestate
 local fs = savestate.create("./savestates/CPU_Yang_lvl_2.fs")
 savestate.load(fs)
-emu.speedmode('turbo')
+--emu.speedmode('turbo')
 
 emu.registerbefore(GameInterface)

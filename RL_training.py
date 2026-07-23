@@ -10,37 +10,31 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import torch
 from tensordict.nn import TensorDictModule
-from tensordict.nn.distributions import NormalParamExtractor
-from torch import nn
 from torchrl.data.replay_buffers import ReplayBuffer
-from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
+from torchrl.data.replay_buffers.samplers import SliceSamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
 from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
                           TransformedEnv)
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
-from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
+from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator, LSTMModule
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
 import copy
 
 from model import LSTM, Critic_LSTM
-from SF3_environment import get_trajectories_vs_CPU
+import SF3_environment
+from SF3_environment.wrappers import FlattenObservation
+import gymnasium
+from torchrl.envs.libs.gym import GymEnv
+from torchrl.envs import GymWrapper
 
-def get_gaes(rewards, dones, values, gamma = 0.99, lamda = 0.9, normalize=True):
-    deltas = np.zeros(len(rewards))
-    for i in reversed(range(len(rewards))):
-        deltas[i] = rewards[i] + gamma * (1 - dones[i]) * values[i+1] - values[i]
-    deltas = np.stack(deltas)
-    gaes = copy.deepcopy(deltas)
-    for t in reversed(range(len(deltas) - 1)):
-        gaes[t] = gaes[t] + (1 - dones[t]) * gamma * lamda * gaes[t + 1]
+# TODO:
+#       - Look into what to modify to have the algorithm work with multi-discrete probabilities
+#       - Use log probability
+#       - Split the damn LSTM into lstm and linear layers so that it can integrate into the torchRL modules nicely
 
-    target = gaes + values[:-1].detach().numpy()
-    if normalize:
-        gaes = (gaes - gaes.mean()) / (gaes.std() + 1e-8)
-    return np.vstack(gaes), np.vstack(target)
 
 is_fork = multiprocessing.get_start_method() == "fork"
 device = (
@@ -52,7 +46,33 @@ num_cells = 256  # number of cells in each layer i.e. output dim.
 lr = 3e-4
 max_grad_norm = 1.0
 
-frames_per_batch = 1000
+base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="cpu")
+flat_env = FlattenObservation(base_env)
+
+torch_env = GymWrapper(flat_env)
+
+env = TransformedEnv(
+    torch_env,
+    Compose(
+        # normalize observations
+        ObservationNorm(in_keys=["observation"]),
+        DoubleToFloat(),
+        StepCounter(),
+    ),
+)
+
+env.transform[0].init_stats(num_iter=1000)
+env.close()
+
+print("normalization constant shape:", env.transform[0].loc.shape)
+print("observation_spec:", env.observation_spec)
+print("reward_spec:", env.reward_spec)
+print("input_spec:", env.input_spec)
+print("action_spec (as defined by input_spec):", env.action_spec)
+
+check_env_specs(env)
+
+frames_per_batch = 3000
 # For a complete training, bring the number of frames up to 1M
 total_frames = 50_000
 
@@ -65,40 +85,32 @@ gamma = 0.99
 lmbda = 0.95
 entropy_eps = 1e-4
 
-# Set up environment here
-traj_num = 4
-scheduler_max_it = 1000
-
 # Set up Actor and Critic networks
 in_size = 28
 action_num = 12
 hidden_size = 128
 
-actor = LSTM(in_size, output_size=action_num, hidden_size=hidden_size).to(device)
-critic = Critic_LSTM(input_size=in_size, output_size=1, hidden_size=hidden_size).to(device)
+actor_instance = LSTM(in_size, output_size=action_num, hidden_size=hidden_size).to(device)
+critic_instance = Critic_LSTM(input_size=in_size, output_size=1, hidden_size=hidden_size).to(device)
 
 # load model checkpoint
 ch_path = 'checkpoints/checkpoint_273_Harmonaz'
 checkpoint = torch.load(ch_path, map_location=device)
-actor.load_state_dict(checkpoint['model_state_dict'])
+actor_instance.load_state_dict(checkpoint['model_state_dict'])
 
-# Collect trajectories
-trajectories = get_trajectories_vs_CPU(actor, hidden_size, device, round_num=traj_num)
+# initialize torchrl wrappers to properly integrate with tensordict and other ppo stuff
+actor = LSTMModule(
+    lstm=actor_instance,
+    in_keys=["state", "act_h", "act_c"],
+    out_keys=["actions", ("next", "act_h"), ("next", "act_c")]
+)
+critic = LSTMModule(
+    lstm=critic_instance,
+    in_keys=["state", "cri_h", "cri_c"],
+    out_keys=["value", ("next", "cri_h"), ("next", "cri_c")]
+)
 
-dones = np.zeros(len(trajectories[0][2]))
-dones[-1] = 1
-
-# Collect values for the trajectories from the critic network
-t_values = []
-hidden = torch.zeros(1, 1, hidden_size, device=device)
-memory = torch.zeros(1, 1, hidden_size, device=device)
-for traj in trajectories:
-    c_input = traj[0].unsqueeze(0)
-    out, hidden, memory = critic(c_input, hidden, memory)
-    t_values.append(out)
-
-# Calculate Advantage
-adv, critic_target = get_gaes(trajectories[0][2], dones, t_values[0].squeeze(0).squeeze(1))
+# initialize PPO modules
 adv_module = GAE(gamma=gamma, lmbda=lmbda, value_network=critic, average_gae=True, device=device)
 loss_module = ClipPPOLoss(
     actor_network=actor,
@@ -108,9 +120,33 @@ loss_module = ClipPPOLoss(
     entropy_coeff=entropy_eps
 )
 optim = torch.optim.Adam(loss_module.parameters(), lr)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, scheduler_max_it, 0.0)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, total_frames // frames_per_batch, 0.0)
+replay_buffer = ReplayBuffer(
+    storage=LazyTensorStorage(max_size=frames_per_batch),
+    sampler=SliceSamplerWithoutReplacement()
+)
 
-# Optimize Critic Network
-
-
-# Optimize Actor Network
+for _ in range(total_frames // frames_per_batch):
+    # Collect trajectories
+    batch = get_trajectories_vs_CPU(actor_instance, hidden_size, device, frame_num=frames_per_batch) # use actor or actor_instance here?
+    for _ in range(num_epochs):
+        # Calculate Advantage
+        adv_module(batch)
+        # update replay buffer with potential newly collected data, advantage calculations and critic values calculated in the inner loop
+        replay_buffer.extend(batch)
+        for _ in range(frames_per_batch // sub_batch_size):
+            sub_batch = replay_buffer.sample(sub_batch_size)
+            # loss module takes care of calculating the values using the critic and applying everything else to calculate loss
+            loss_vals = loss_module(sub_batch.to(device))
+            loss_value = (
+                        loss_vals["loss_objective"]
+                        + loss_vals["loss_critic"]
+                        + loss_vals["loss_entropy"]
+                    )
+            # Optimization: backward, grad clipping and optimization step
+            loss_value.backward()
+            # this is not strictly mandatory but it's good practice to keep your gradient norm bounded
+            torch.nn.utils.clip_grad_norm_(loss_module.parameters(), max_grad_norm)
+            optim.step()
+            optim.zero_grad()
+    scheduler.step()
