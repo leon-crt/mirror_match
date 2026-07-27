@@ -22,14 +22,14 @@ class ResBlockMLP(nn.Module):
         return x + skip
 
 class LSTM(nn.Module):
-    def __init__(self, input_size, output_size, num_blocks=1, hidden_size=128):
+    def __init__(self, input_size, output_size, num_blocks=1, hidden_size=128, num_layers=1):
         super(LSTM, self).__init__()
         # Define layers for input MLP, LSTM, residual blocks, and output linear layer
         self.input_mlp = nn.Sequential(nn.Linear(input_size, 4 * input_size),
                                        nn.ReLU(),
                                        nn.Linear(4 * input_size, hidden_size))
         
-        self.lstm = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=1, batch_first=True)
+        self.lstm = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
         blocks = [ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)]
         self.res_blocks = nn.Sequential(*blocks)
         self.fc_out = nn.Linear(hidden_size, output_size)

@@ -22,16 +22,18 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
-full_dataset = MatchDataset('data/Makoto2/Akuma1/train/')
+full_dataset = MatchDataset('data/Makoto2/')
 dataset_train, dataset_val = torch.utils.data.random_split(full_dataset, [0.8, 0.2])
 
 dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
 dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
 
 # Define hyperparameters
+lstm_layers = 2
 learning_rate = 1e-4 
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 32
+positive_weights = torch.tensor([3.621885069952393, 50.195255728485115, 3.314921347101746, 2.197678058417212, 18.04248047886332, 23.088295015392678, 50.04390189737255, 42.27559425747235, 82.58090909090909, 70.17812143147464, 83579.90909090909, 6317.831615120275])
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 128
@@ -39,9 +41,9 @@ out_size = 12 # number of pressable buttons same as targets
 print(f'using device: {device}')
 
 # Create the LSTM model
-match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size).to(device)
+match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size, num_layers=lstm_layers).to(device)
 optimizer = optim.Adam(match_lstm.parameters(), lr=learning_rate)
-loss_fn = nn.BCEWithLogitsLoss()
+loss_fn = nn.BCEWithLogitsLoss(pos_weight=positive_weights)
 
 # metrics loggers
 avg_train_losses, avg_val_losses = [], []
@@ -71,8 +73,8 @@ for epoch in range(nepochs):
         traj_block = traj_pad.to(device)
         target_seq_block = targets_pad.to(device)
 
-        hidden = torch.zeros(2, traj_pad.shape[1], hidden_size, device=device)
-        memory = torch.zeros(2, traj_pad.shape[1], hidden_size, device=device)
+        hidden = torch.zeros(lstm_layers, traj_pad.shape[1], hidden_size, device=device)
+        memory = torch.zeros(lstm_layers, traj_pad.shape[1], hidden_size, device=device)
 
         # Pass the input sequence through the LSTM
         data_pred, _, _ = match_lstm(traj_block, hidden, memory, traj_lens)
