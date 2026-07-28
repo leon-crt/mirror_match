@@ -29,7 +29,7 @@ dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
 dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
 
 # Define hyperparameters
-lstm_layers = 2
+lstm_layers = 1
 learning_rate = 1e-4 
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 32
@@ -43,7 +43,7 @@ print(f'using device: {device}')
 # Create the LSTM model
 match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size, num_layers=lstm_layers).to(device)
 optimizer = optim.Adam(match_lstm.parameters(), lr=learning_rate)
-loss_fn = nn.BCEWithLogitsLoss(pos_weight=positive_weights)
+loss_fn = nn.BCEWithLogitsLoss(pos_weight=positive_weights).to(device)
 
 # metrics loggers
 avg_train_losses, avg_val_losses = [], []
@@ -53,7 +53,7 @@ avg_val_rec = []
 avg_macro_prec, avg_macro_rec, avg_macro_acc = [], [], []
 
 # initialize early stopping
-es = EarlyStopping(min_delta=0.0001, tolerance=5)
+es = EarlyStopping(min_delta=0.01, tolerance=30)
 
 # seq have shape [batch_size, seq_len, feat_num]
 # Run training loop for each epoch
@@ -109,8 +109,8 @@ for epoch in range(nepochs):
             target_seq_block = targets_pad.to(device)
             
             # Initialize hidden state and memory, shape 1 cause 0 should be batch
-            hidden = torch.zeros(1, traj_pad.shape[1], hidden_size, device=device)
-            memory = torch.zeros(1, traj_pad.shape[1], hidden_size, device=device)
+            hidden = torch.zeros(lstm_layers, traj_pad.shape[1], hidden_size, device=device)
+            memory = torch.zeros(lstm_layers, traj_pad.shape[1], hidden_size, device=device)
 
             # Pass the input sequence through the LSTM
             data_pred, _, _ = match_lstm(traj_block, hidden, memory, traj_lens)
