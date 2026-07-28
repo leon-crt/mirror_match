@@ -7,6 +7,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 import torch.nn.functional as F
+import numpy as np
 
 from data_preprocessing import MatchDataset, pad_collate
 from model import LSTM
@@ -30,13 +31,13 @@ dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
 
 # Define hyperparameters
 lstm_layers = 1
-learning_rate = 1e-4 
+learning_rate = 1e-4
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 32
-positive_weights = torch.tensor([3.621885069952393, 50.195255728485115, 3.314921347101746, 2.197678058417212, 18.04248047886332, 23.088295015392678, 50.04390189737255, 42.27559425747235, 82.58090909090909, 70.17812143147464, 83579.90909090909, 6317.831615120275])
+positive_weights = torch.tensor([np.float64(3.621885069952393), np.float64(50.195255728485115), np.float64(3.314921347101746), np.float64(2.197678058417212), np.float64(18.04248047886332), np.float64(23.088295015392678), np.float64(50.04390189737255), np.float64(42.27559425747235), np.float64(82.58090909090909), np.float64(70.17812143147464), np.float64(1.0), np.float64(1.0)])
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
-hidden_size = 128
+hidden_size = 512
 out_size = 12 # number of pressable buttons same as targets
 print(f'using device: {device}')
 
@@ -53,7 +54,7 @@ avg_val_rec = []
 avg_macro_prec, avg_macro_rec, avg_macro_acc = [], [], []
 
 # initialize early stopping
-es = EarlyStopping(min_delta=0.01, tolerance=30)
+es = EarlyStopping(min_delta=0.01, tolerance=5)
 
 # seq have shape [batch_size, seq_len, feat_num]
 # Run training loop for each epoch

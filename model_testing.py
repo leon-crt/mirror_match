@@ -16,7 +16,7 @@ memory = torch.zeros([num_layers, 1, hidden_size])
 threshold = 0.49
 
 device = torch.device("cpu")
-ch_path = 'checkpoints/checkpoint_final'
+ch_path = 'checkpoints/checkpoint_79'
 checkpoint = torch.load(ch_path, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
