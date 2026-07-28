@@ -25,6 +25,24 @@ hidden_size = 128
 out_size = 12 # number of pressable buttons same as targets
 threshold = 0.3
 
+def normalize(obs):
+    MAX_X = 928
+    MIN_X = 93
+    MAX_Y = 226
+    MIN_Y = -42
+
+    obs[0] = (obs[0] - MIN_X) / (MAX_X - MIN_X)
+    obs[8] = (obs[8] - MIN_X) / (MAX_X - MIN_X)
+    obs[1] = (obs[1] - MIN_Y) / (MAX_Y - MIN_Y)
+    obs[9] = (obs[9] - MIN_Y) / (MAX_Y - MIN_Y)
+    obs[2] = obs[2] / 161
+    obs[10] = obs[10] / 161
+    obs[3] = obs[3] / 161
+    obs[11] = obs[11] / 336
+    obs[4] = obs[4] / 161
+    obs[12] = obs[12] / 70
+    return obs
+
 def enumWindowsProc(hwnd, lParam):
     if (lParam is None) or ((lParam is not None) and win32process.GetWindowThreadProcessId(hwnd)[1] == lParam):
         text = win32gui.GetWindowText(hwnd)
