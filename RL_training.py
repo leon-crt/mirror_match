@@ -17,7 +17,7 @@ from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
                           TransformedEnv)
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
-from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator, LSTMModule
+from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
@@ -99,22 +99,30 @@ checkpoint = torch.load(ch_path, map_location=device)
 actor_instance.load_state_dict(checkpoint['model_state_dict'])
 
 # initialize torchrl wrappers to properly integrate with tensordict and other ppo stuff
-actor = LSTMModule(
-    lstm=actor_instance,
+actor_lstm = LSTMModule(
+    lstm=actor_instance.lstm
     in_keys=["state", "act_h", "act_c"],
     out_keys=["actions", ("next", "act_h"), ("next", "act_c")]
 )
-critic = LSTMModule(
-    lstm=critic_instance,
+critic_lstm = LSTMModule(
+    lstm=critic_instance.lstm,
     in_keys=["state", "cri_h", "cri_c"],
     out_keys=["value", ("next", "cri_h"), ("next", "cri_c")]
 )
+policy_module = TensorDictModule(actor_instance, in_keys=["observation"], out_keys=["logits"])
+policy_module = ProbabilisticActor(
+    policy_module,
+    in_keys=["logits"],
+    spec=env.action_spec,
+    distribution_class=torch.distributions.
+
+    )
 
 # initialize PPO modules
-adv_module = GAE(gamma=gamma, lmbda=lmbda, value_network=critic, average_gae=True, device=device)
+adv_module = GAE(gamma=gamma, lmbda=lmbda, value_network=critic_lstm, average_gae=True, device=device)
 loss_module = ClipPPOLoss(
-    actor_network=actor,
-    critic_network=critic,
+    actor_network=actor_lstm,
+    critic_network=critic_lstm,
     clip_epsilon=clip_epsilon,
     entropy_bonus=bool(entropy_eps),
     entropy_coeff=entropy_eps
