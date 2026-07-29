@@ -110,13 +110,7 @@ critic_lstm = LSTMModule(
     out_keys=["value", ("next", "cri_h"), ("next", "cri_c")]
 )
 policy_module = TensorDictModule(actor_instance, in_keys=["observation"], out_keys=["logits"])
-policy_module = ProbabilisticActor(
-    policy_module,
-    in_keys=["logits"],
-    spec=env.action_spec,
-    distribution_class=torch.distributions.
 
-    )
 
 # initialize PPO modules
 adv_module = GAE(gamma=gamma, lmbda=lmbda, value_network=critic_lstm, average_gae=True, device=device)
