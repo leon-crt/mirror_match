@@ -6,17 +6,17 @@ from util import format_pred_env, normalize
 import gymnasium
 
 # lstm init
-in_size = 28
+in_size = 26
 hidden_size = 512
-out_size = 12
-num_layers = 1
+out_size = 10
+num_layers = 2
 model = LSTM(input_size=in_size, output_size=out_size, num_layers=num_layers, hidden_size=hidden_size)
 hidden = torch.zeros([num_layers, 1, hidden_size])
 memory = torch.zeros([num_layers, 1, hidden_size])
 threshold = 0.5
 
 device = torch.device("cpu")
-ch_path = 'checkpoints/checkpoint_99_old'
+ch_path = 'checkpoints/checkpoint_final'
 checkpoint = torch.load(ch_path, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 

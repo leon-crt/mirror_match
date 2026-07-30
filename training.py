@@ -15,10 +15,6 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 
 # TODO: 
 #       - implement the ground truth being the autoregressive lstm input
-#       - increase batch size, learning rate
-#       - increase model complexity
-#       - look into modifying weights for directions and buttons in data processing
-#       - look into feature analysis
 
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
@@ -30,19 +26,19 @@ dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
 dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
 
 # Define hyperparameters
-lstm_layers = 1
+lstm_layers = 2
 learning_rate = 1e-4
 nepochs = 1000  # Maybe use loss threshold to stop automatically
-batch_size = 32
-positive_weights = torch.tensor([np.float64(3.621885069952393), np.float64(50.195255728485115), np.float64(3.314921347101746), np.float64(2.197678058417212), np.float64(18.04248047886332), np.float64(23.088295015392678), np.float64(50.04390189737255), np.float64(42.27559425747235), np.float64(82.58090909090909), np.float64(70.17812143147464), np.float64(1.0), np.float64(1.0)])
+batch_size = 64
+positive_weights = torch.tensor([1.81094253, 25.09762786,  1.65746067,  1.09883903,  9.02124024, 11.54414751, 25.02195095, 21.13779713, 41.29045455, 35.08906072])
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 512
-out_size = 12 # number of pressable buttons same as targets
+out_size = 10 # number of pressable buttons same as targets
 print(f'using device: {device}')
 
 # Create the LSTM model
-match_lstm = LSTM(input_size=28, output_size=out_size, hidden_size=hidden_size, num_layers=lstm_layers).to(device)
+match_lstm = LSTM(input_size=26, output_size=out_size, hidden_size=hidden_size, num_layers=lstm_layers).to(device)
 optimizer = optim.Adam(match_lstm.parameters(), lr=learning_rate)
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=positive_weights).to(device)
 

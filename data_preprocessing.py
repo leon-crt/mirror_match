@@ -60,13 +60,13 @@ class MatchDataset(Dataset):
         opponent_character = ch_names[3 - int(player_side)][:-1]
         target_data = raw_data.loc[raw_data['Player'] == target_character].reset_index()
         opponent_data = raw_data.loc[raw_data['Player'] ==  opponent_character].reset_index()
-        labels = target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']].copy()
+        labels = target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']].copy()
 
         # normalize scalar features
         target_data = self.norm_scalar_features(target_data)
         opponent_data = self.norm_scalar_features(opponent_data)
         
-        states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk','Start','Coin']]], axis=1)
+        states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
     
         return torch.tensor(states.values, dtype=torch.float32), torch.tensor(labels.values, dtype=torch.float32)
 
@@ -74,7 +74,6 @@ class MatchDataset(Dataset):
         return self.max_seq_len
 
 # This is necessary because all the trajectories from replays have differing length but we still want to process them in batches 
-# TODO: batch is fucked for some reason it's only 9 long and it has weird values
 def pad_collate(batch):
     (trajectories, targets) = zip(*batch)
     traj_lens = [len(seq) for seq in trajectories]
