@@ -30,13 +30,15 @@ x_features_std = []
 x_state_max = []
 x_state_mins = []
 
-player_inputs_count = np.zeros(12)
-opponent_inputs_count = np.zeros(12)
+player_inputs_count = np.zeros(10)
+opponent_inputs_count = np.zeros(10)
 
 left_side = 0
 right_side = 0
 
 total_frames = 0
+file_counter = 0
+errors = []
 
 print("Computing stats")
 for x_features, y_features in dataset:
@@ -56,16 +58,16 @@ for x_features, y_features in dataset:
     for feature in y_features:
         player_inputs_count += feature.numpy()
     for feature in x_features:
-        opponent_inputs_count += feature[-12:].numpy()
-
+        opponent_inputs_count += feature[-10:].numpy()
+    file_counter += 1
 
 # Plotting input counts
 input_fig, (pl, opp) = plt.subplots(1,2, sharey=True)
-plt.setp((pl,opp), xticks=range(0,12), xticklabels=['left', 'up', 'right', 'down', 'lp', 'mp', 'hp', 'lk', 'mk', 'hk', 'start', 'coin'])
+plt.setp((pl,opp), xticks=range(0,10), xticklabels=['left', 'up', 'right', 'down', 'lp', 'mp', 'hp', 'lk', 'mk', 'hk'])
 input_fig.set_figwidth(11)
-pl.bar(range(0,12),player_inputs_count)
+pl.bar(range(0,10),player_inputs_count)
 pl.set_title("Player")
-opp.bar(range(0,12),opponent_inputs_count)
+opp.bar(range(0,10),opponent_inputs_count)
 opp.set_title("Opponent")
 input_fig.suptitle("Total Number of Button Presses")
 
@@ -75,7 +77,7 @@ probs_bp_pl = [bp/total_bp_pl for bp in player_inputs_count]
 total_bp_opp = opponent_inputs_count.sum()
 probs_bp_opp = [bp/total_bp_opp for bp in opponent_inputs_count]
 
-num_neg_samples_per_class = np.array([total_frames] * 12) - player_inputs_count
+num_neg_samples_per_class = np.array([total_frames] * 10) - player_inputs_count
 pos_weights = num_neg_samples_per_class / player_inputs_count
 
 # Plotting playing side

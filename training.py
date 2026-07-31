@@ -30,7 +30,7 @@ lstm_layers = 2
 learning_rate = 1e-4
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 64
-positive_weights = torch.tensor([1.81094253, 25.09762786,  1.65746067,  1.09883903,  9.02124024, 11.54414751, 25.02195095, 21.13779713, 41.29045455, 35.08906072])
+positive_weights = torch.tensor([np.float64(2.313621150191648), np.float64(24.52988583923883), np.float64(3.0714481487745), np.float64(2.3505746850629876), np.float64(21.93719159225457), np.float64(27.034242945021763), np.float64(37.54344705752457), np.float64(31.70114565671516), np.float64(38.17802992042917), np.float64(42.19113134712462)])
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 512

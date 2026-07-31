@@ -55,11 +55,13 @@ class MatchDataset(Dataset):
         filename = self.file_names[idx]
         raw_data = pd.read_csv(self.dir_path + filename)
         player_side = filename[0]
-        ch_names = str.split(filename, '-')
-        target_character = ch_names[int(player_side)][:-1]
-        opponent_character = ch_names[3 - int(player_side)][:-1]
-        target_data = raw_data.loc[raw_data['Player'] == target_character].reset_index()
-        opponent_data = raw_data.loc[raw_data['Player'] ==  opponent_character].reset_index()
+        p1_data = raw_data.loc[raw_data.index % 2 == 0].reset_index()
+        p2_data = raw_data.loc[raw_data.index % 2 == 1].reset_index()
+        target_data, opponent_data = p1_data, p2_data
+        if player_side == 2:
+            target_data = p2_data
+            opponent_data = p1_data
+            
         labels = target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']].copy()
 
         # normalize scalar features
