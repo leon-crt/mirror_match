@@ -99,8 +99,8 @@ print("Shape of the rollout TensorDict:", rollout.batch_size)
 # HyperParameters
 num_layers = 2
 hidden_size = 512
-input_size = 28
-actor_output_size = 12
+input_size = 26
+actor_output_size = 10
 num_blocks = 1
 
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
