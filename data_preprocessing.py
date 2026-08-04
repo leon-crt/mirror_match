@@ -58,7 +58,7 @@ class MatchDataset(Dataset):
         p1_data = raw_data.loc[raw_data.index % 2 == 0].reset_index()
         p2_data = raw_data.loc[raw_data.index % 2 == 1].reset_index()
         target_data, opponent_data = p1_data, p2_data
-        if player_side == 2:
+        if int(player_side) == 2:
             target_data = p2_data
             opponent_data = p1_data
             

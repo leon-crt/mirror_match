@@ -19,18 +19,22 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
-full_dataset = MatchDataset('data/Makoto2/')
+full_dataset = MatchDataset('data/Akuma1/')
 dataset_train, dataset_val = torch.utils.data.random_split(full_dataset, [0.8, 0.2])
 
-dl_train = DataLoader(dataset_train, 32, collate_fn=pad_collate)
-dl_val = DataLoader(dataset_val, 32, collate_fn=pad_collate)
+
+# Neon00 Makoto2 weights torch.tensor([np.float64(3.6488536606153583), np.float64(56.805596953137936), np.float64(3.2936457761914015), np.float64(2.171915363010979), np.float64(17.536269361270556), np.float64(22.91324898445688), np.float64(51.710032010629945), np.float64(43.071203130917816), np.float64(90.91605887464125), np.float64(71.82832286733566)]
 
 # Define hyperparameters
 lstm_layers = 2
 learning_rate = 1e-4
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 64
-positive_weights = torch.tensor([np.float64(2.313621150191648), np.float64(24.52988583923883), np.float64(3.0714481487745), np.float64(2.3505746850629876), np.float64(21.93719159225457), np.float64(27.034242945021763), np.float64(37.54344705752457), np.float64(31.70114565671516), np.float64(38.17802992042917), np.float64(42.19113134712462)])
+positive_weights = torch.tensor([np.float64(2.9226014981326007), np.float64(11.15064121487457), np.float64(2.639903487231234), np.float64(3.260643682218815), np.float64(33.34075440214289), np.float64(35.64161551796842), np.float64(41.13497553932027), np.float64(33.98286736747931), np.float64(38.89480987215982), np.float64(86.31070670983588)])
+positive_weights = torch.sqrt(positive_weights)
+
+dl_train = DataLoader(dataset_train, batch_size, collate_fn=pad_collate)
+dl_val = DataLoader(dataset_val, batch_size, collate_fn=pad_collate)
 
 device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 512

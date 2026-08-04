@@ -13,7 +13,7 @@ num_layers = 2
 model = LSTM(input_size=in_size, output_size=out_size, num_layers=num_layers, hidden_size=hidden_size)
 hidden = torch.zeros([num_layers, 1, hidden_size])
 memory = torch.zeros([num_layers, 1, hidden_size])
-threshold = 0.5
+threshold = 0.15
 
 device = torch.device("cpu")
 ch_path = 'checkpoints/checkpoint_final'
