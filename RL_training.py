@@ -15,31 +15,39 @@ from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
 from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
-                          TransformedEnv)
+                          TransformedEnv, InitTracker)
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
 from torchrl.collectors import Collector
-from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
+from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule, get_primers_from_module
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
 import copy
+from torch.distributions import Bernoulli, Independent
+import gymnasium
+from torchrl.envs.libs.gym import GymEnv
+from torchrl.envs import GymWrapper
 
 from model import LSTM, Critic_LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-import gymnasium
-from torchrl.envs.libs.gym import GymEnv
-from torchrl.envs import GymWrapper
+from util import save_checkpoint
 
 # TODO:
 #       - Look into what to modify to have the algorithm work with multi-discrete probabilities
 #       - Use log probability
 #       - Split the damn LSTM into lstm and linear layers so that it can integrate into the torchRL modules nicely
 
+class IndependentBernoulli(Independent):
+    def __init__(self, probs=None, logits=None):
+        base_dist = Bernoulli(probs=probs, logits=logits)
+        super().__init__(base_dist, reinterpreted_batch_ndims=1)
+
 ch_path = 'checkpoints/checkpoint_final'
+plots_dir = "plots/RL/"
 
 # Hyperparameters definition
-frames_per_batch = 3000
+frames_per_batch = 500
 # For a complete training, bring the number of frames up to 1M
 total_frames = 50_000
 
@@ -63,7 +71,7 @@ lr = 3e-4
 max_grad_norm = 1.0
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
-base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="cpu")
+base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="cpu")
 flat_env = FlattenObservation(base_env)
 
 torch_env = GymWrapper(flat_env)
@@ -71,15 +79,13 @@ torch_env = GymWrapper(flat_env)
 env = TransformedEnv(
     torch_env,
     Compose(
-        # normalize observations
         ObservationNorm(in_keys=["observation"]),
-        DoubleToFloat(),
+        InitTracker(),
         StepCounter(),
     ),
 )
 
-env.transform[0].init_stats(num_iter=1000)
-env.close()
+env.transform[0].init_stats(num_iter=3000)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -88,11 +94,6 @@ print("input_spec:", env.input_spec)
 print("action_spec (as defined by input_spec):", env.action_spec)
 
 check_env_specs(env)
-env.close()
-
-rollout = env.rollout(500)
-print("rollout of three steps:", rollout)
-print("Shape of the rollout TensorDict:", rollout.batch_size)
 
 # Set up Actor and Critic networks
 
@@ -135,7 +136,7 @@ rec_core = LSTMModule(
 
 rec_core.lstm.load_state_dict(pretrained_actor.lstm.state_dict())
 
-# Action Head babyyyyyyy
+# Action Head
 action_head_net = nn.Sequential(*[ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)])
 
 action_head = TensorDictModule(
@@ -152,10 +153,8 @@ fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer, nn.Sigmoid())
 fc_out_pol = TensorDictModule(
     module=fc_out_pol_net,
     in_keys=["action_head_out"],
-    out_keys=["value"]
+    out_keys=["probs"]
 )
-
-fc_out_crit = nn.Sequential(nn.ReLU(), nn.Linear(hidden_size, 1), nn.Sigmoid())
 
 policy_module = TensorDictSequential(
     input_mlp,
@@ -164,24 +163,24 @@ policy_module = TensorDictSequential(
     fc_out_pol
 )
 
-value_net = TensorDictSequential(
-    input_mlp,
-    rec_core,
-    action_head,
-    fc_out_crit
-)
-
 policy_module = ProbabilisticActor(
     module=policy_module,
     spec=env.action_spec,
     in_keys=["probs"],
-    distribution_class=torch.distributions.Bernoulli,
-    distribution_kwargs={
-        "low": env.action_spec.space.low,
-        "high": env.action_spec.space.high,
-    },
+    distribution_class=IndependentBernoulli,
     return_log_prob=True,
     # we'll need the log-prob for the numerator of the importance weights
+)
+
+# Critic network
+value_net = nn.Sequential(
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(num_cells, device=device),
+    nn.Tanh(),
+    nn.LazyLinear(1, device=device),
 )
 
 value_module = ValueOperator(
@@ -202,8 +201,8 @@ loss_module = ClipPPOLoss(
     critic_network=value_module,
     clip_epsilon=clip_epsilon,
     entropy_bonus=bool(entropy_eps),
-    entropy_coef=entropy_eps,
-    critic_coef=1.0,
+    entropy_coeff=entropy_eps,
+    critic_coeff=1.0,
     loss_critic_type="smooth_l1",
 )
 
@@ -212,8 +211,10 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, total_frames // fr
 
 # initialize collector and replay buffer
 replay_buffer = ReplayBuffer(
-    storage=LazyTensorStorage(max_size=frames_per_batch),
-    sampler=SliceSamplerWithoutReplacement()
+    storage=LazyTensorStorage(frames_per_batch),
+    sampler=SliceSamplerWithoutReplacement(num_slices=1, strict_length=False),
+    batch_size=sub_batch_size
+
 )
 
 collector = Collector(
@@ -233,13 +234,17 @@ eval_str = ""
 # designed to collect:
 for i, tensordict_data in enumerate(collector):
     # we now have a batch of data to work with. Let's learn something from it.
-    for _ in range(num_epochs):
+    for epoch in range(num_epochs):
         # We'll need an "advantage" signal to make PPO work.
         # We re-compute it at each epoch as its value depends on the value
         # network which is updated in the inner loop.
+        a = tensordict_data["action"]
         advantage_module(tensordict_data)
-        data_view = tensordict_data.reshape(-1)
-        replay_buffer.extend(data_view.cpu())
+        advantage = tensordict_data.get(
+            "advantage", None, as_padded_tensor=True
+        )
+        epoch_loss = defaultdict(list)
+        replay_buffer.extend(tensordict_data.cpu())
         for _ in range(frames_per_batch // sub_batch_size):
             subdata = replay_buffer.sample(sub_batch_size)
             loss_vals = loss_module(subdata.to(device))
@@ -248,6 +253,9 @@ for i, tensordict_data in enumerate(collector):
                 + loss_vals["loss_critic"]
                 + loss_vals["loss_entropy"]
             )
+            epoch_loss["loss_objective"].append(loss_vals["loss_objective"].detach().numpy())
+            epoch_loss["loss_critic"].append(loss_vals["loss_critic"].detach().numpy())
+            epoch_loss["loss_entropy"].append(loss_vals["loss_entropy"].detach().numpy())
 
             # Optimization: backward, grad clipping and optimization step
             loss_value.backward()
@@ -257,6 +265,9 @@ for i, tensordict_data in enumerate(collector):
             optim.step()
             optim.zero_grad()
 
+    logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).sum())
+    logs["loss_critic"].append(np.array(epoch_loss["loss_critic"]).sum())
+    logs["loss_entropy"].append(np.array(epoch_loss["loss_entropy"]).sum())
     logs["reward"].append(tensordict_data["next", "reward"].mean().item())
     pbar.update(tensordict_data.numel())
     cum_reward_str = (
@@ -287,6 +298,31 @@ for i, tensordict_data in enumerate(collector):
                 f"eval step-count: {logs['eval step_count'][-1]}"
             )
             del eval_rollout
+        # Save parameters
+        filename = 'checkpoint_' + str(i)
+        checkpoint = {
+            "epoch": epoch + 1,
+            'model_state_dict': policy_module.state_dict(),
+            'critic_state_dict': value_module.state_dict(),
+            'loss': loss_value
+        }
+        torch.save(checkpoint, f'./checkpoints/RL/{filename}')
+        plt.plot(logs["loss_objective"], label="objective loss")
+        plt.plot(logs["loss_critic"], label="critic loss")
+        plt.plot(logs["loss_entropy"], label="entropy loss")
+        plt.xlabel("Steps")
+        plt.ylabel("Losses")
+        plt.legend()
+        plt.savefig(plots_dir + 'loss_' + str(i))
+        plt.close()
+        plt.plot(logs['reward'][-1])
+        plt.xlabel("Epochs")
+        plt.ylabel("Reward")
+        plt.savefig(plots_dir + 'reward_' + str(i))
+        plt.close()
+        
+
+
     pbar.set_description(", ".join([eval_str, cum_reward_str, stepcount_str, lr_str]))
 
     # We're also using a learning rate scheduler. Like the gradient clipping,
