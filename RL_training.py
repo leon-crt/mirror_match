@@ -10,7 +10,6 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from tensordict.nn import TensorDictModule, TensorDictSequential
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
@@ -18,6 +17,7 @@ from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
                           TransformedEnv, InitTracker)
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
 from torchrl.collectors import Collector
+from tensordict.nn import TensorDictModule, TensorDictSequential
 from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule, get_primers_from_module
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
@@ -47,11 +47,11 @@ ch_path = 'checkpoints/checkpoint_final'
 plots_dir = "plots/RL/"
 
 # Hyperparameters definition
-frames_per_batch = 500
+frames_per_batch = 5000
 # For a complete training, bring the number of frames up to 1M
-total_frames = 50_000
+total_frames = 200_000
 
-sub_batch_size = 64  # cardinality of the sub-samples gathered from the current data in the inner loop
+sub_batch_size = 500  # cardinality of the sub-samples gathered from the current data in the inner loop
 num_epochs = 10  # optimization steps per batch of data collected
 clip_epsilon = (
     0.2  # clip value for PPO loss: see the equation in the intro for more context.
@@ -85,7 +85,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=3000)
+env.transform[0].init_stats(num_iter=5000)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -315,7 +315,7 @@ for i, tensordict_data in enumerate(collector):
         plt.legend()
         plt.savefig(plots_dir + 'loss_' + str(i))
         plt.close()
-        plt.plot(logs['reward'][-1])
+        plt.plot(logs['reward'])
         plt.xlabel("Epochs")
         plt.ylabel("Reward")
         plt.savefig(plots_dir + 'reward_' + str(i))
