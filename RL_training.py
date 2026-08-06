@@ -18,7 +18,7 @@ from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
 from torchrl.collectors import Collector
 from tensordict.nn import TensorDictModule, TensorDictSequential
-from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule, get_primers_from_module
+from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
@@ -28,15 +28,10 @@ import gymnasium
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs import GymWrapper
 
-from model import LSTM, Critic_LSTM, ResBlockMLP
+from model import LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-from util import save_checkpoint
-
-# TODO:
-#       - Look into what to modify to have the algorithm work with multi-discrete probabilities
-#       - Use log probability
-#       - Split the damn LSTM into lstm and linear layers so that it can integrate into the torchRL modules nicely
+from util import  EarlyStopping
 
 class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
@@ -49,7 +44,7 @@ plots_dir = "plots/RL/"
 # Hyperparameters definition
 frames_per_batch = 5000
 # For a complete training, bring the number of frames up to 1M
-total_frames = 200_000
+total_frames = 1_000_000
 
 sub_batch_size = 500  # cardinality of the sub-samples gathered from the current data in the inner loop
 num_epochs = 10  # optimization steps per batch of data collected
@@ -67,7 +62,7 @@ device = (
     else torch.device("cpu")
 )
 num_cells = 256  # number of cells in each layer i.e. output dim.
-lr = 3e-4
+lr = 3e-6
 max_grad_norm = 1.0
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
@@ -85,7 +80,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=5000)
+env.transform[0].init_stats(num_iter=10)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -173,19 +168,53 @@ policy_module = ProbabilisticActor(
 )
 
 # Critic network
+
+# input_mlp_val = nn.Sequential(nn.Linear(input_size, 4 * input_size),
+#                                        nn.ReLU(),
+#                                        nn.Linear(4 * input_size, hidden_size))
+
+# input_mlp_val = TensorDictModule(
+#     module=input_mlp_net,
+#     in_keys=["observation"],
+#     out_keys=["features_val"]
+# )
+
+# # LSTM tensordict wrapper
+# rec_core_val = LSTMModule(
+#     input_size=hidden_size, 
+#     hidden_size=hidden_size, 
+#     num_layers=num_layers,
+#     batch_first=True,
+#     in_keys=["features_val", "rs_h_val", "rs_c_val", "is_init"],
+#     out_keys=["rec_output_val", ("next", "rs_h_val"), ("next", "rs_c_val")]
+# )
+
+# fc_out_val = nn.Sequential(nn.ReLU(), nn.Linear(hidden_size, 1))
+# fc_out_val = TensorDictModule(
+#     module=fc_out_val,
+#     in_keys=["rec_output_val"],
+#     out_keys=["state_value"]
+# )
+
+# value_module = TensorDictSequential(
+#     input_mlp_val,
+#     rec_core_val,
+#     fc_out_val
+# )
+
 value_net = nn.Sequential(
-    nn.LazyLinear(num_cells, device=device),
+    nn.LazyLinear(hidden_size, device=device),
     nn.Tanh(),
-    nn.LazyLinear(num_cells, device=device),
+    nn.LazyLinear(hidden_size, device=device),
     nn.Tanh(),
-    nn.LazyLinear(num_cells, device=device),
+    nn.LazyLinear(hidden_size, device=device),
     nn.Tanh(),
     nn.LazyLinear(1, device=device),
 )
 
 value_module = ValueOperator(
     module=value_net,
-    in_keys=["observation"],
+    in_keys=["rs_h"],
 )
 
 print("Running policy:", policy_module(env.reset()))
@@ -214,7 +243,6 @@ replay_buffer = ReplayBuffer(
     storage=LazyTensorStorage(frames_per_batch),
     sampler=SliceSamplerWithoutReplacement(num_slices=1, strict_length=False),
     batch_size=sub_batch_size
-
 )
 
 collector = Collector(
@@ -229,6 +257,11 @@ collector = Collector(
 logs = defaultdict(list)
 pbar = tqdm(total=total_frames)
 eval_str = ""
+
+# Freeze policy module until critic is up to speed
+policy_module.requires_grad_(False)
+grad_pol = False
+es = EarlyStopping(min_delta=0.1, tolerance=3)
 
 # We iterate over the collector until it reaches the total number of frames it was
 # designed to collect:
@@ -265,9 +298,13 @@ for i, tensordict_data in enumerate(collector):
             optim.step()
             optim.zero_grad()
 
-    logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).sum())
-    logs["loss_critic"].append(np.array(epoch_loss["loss_critic"]).sum())
-    logs["loss_entropy"].append(np.array(epoch_loss["loss_entropy"]).sum())
+            # Unfreeze this mf actor
+            if grad_pol and es.early_stop(loss_vals["loss_critic"]):
+                policy_module.requires_grad_(True)
+
+    logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).mean())
+    logs["loss_critic"].append(np.array(epoch_loss["loss_critic"]).mean())
+    logs["loss_entropy"].append(np.array(epoch_loss["loss_entropy"]).mean())
     logs["reward"].append(tensordict_data["next", "reward"].mean().item())
     pbar.update(tensordict_data.numel())
     cum_reward_str = (
@@ -306,6 +343,7 @@ for i, tensordict_data in enumerate(collector):
             'critic_state_dict': value_module.state_dict(),
             'loss': loss_value
         }
+
         torch.save(checkpoint, f'./checkpoints/RL/{filename}')
         plt.plot(logs["loss_objective"], label="objective loss")
         plt.plot(logs["loss_critic"], label="critic loss")
