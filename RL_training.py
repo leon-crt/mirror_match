@@ -19,6 +19,7 @@ from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration
 from torchrl.collectors import Collector
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
+from torchrl.modules.utils import get_primers_from_module
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
@@ -37,6 +38,22 @@ class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
         base_dist = Bernoulli(probs=probs, logits=logits)
         super().__init__(base_dist, reinterpreted_batch_ndims=1)
+
+class CriticHead(nn.Module):
+    def __init__(self, hid_size, mem_size, num_blocks, num_layers_lstm):
+        super(CriticHead, self).__init__()
+        input_size = (hid_size + mem_size) * num_layers_lstm
+        blocks = [ResBlockMLP(input_size, input_size) for _ in range(num_blocks)]
+        self.res_blocks = nn.Sequential(*blocks)
+        self.fc1 = nn.Linear(input_size, input_size//2)
+        self.out = nn.Linear(input_size//2, 1)
+        self.act = nn.LeakyReLU()
+
+    def forward(self, hid_state, mem_state):
+        input_state = torch.cat((hid_state, mem_state), 1)
+        x = self.act(self.res_blocks(input_state))
+        x = self.act(self.fc1(x))
+        return self.out(x)
 
 ch_path = 'checkpoints/checkpoint_final'
 plots_dir = "plots/RL/"
@@ -80,7 +97,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=10)
+env.transform[0].init_stats(num_iter=frames_per_batch)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -89,7 +106,6 @@ print("input_spec:", env.input_spec)
 print("action_spec (as defined by input_spec):", env.action_spec)
 
 check_env_specs(env)
-
 # Set up Actor and Critic networks
 
 # HyperParameters
@@ -99,44 +115,47 @@ input_size = 26
 actor_output_size = 10
 num_blocks = 1
 
-# The models have to be dissected into their individual components so that they can interact with Tensordict nicely
-
 # Load pre trained weights to actor and transfer them to each individual component of the model
 pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
 checkpoint = torch.load(ch_path, map_location=device)
 pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
 
-# Initial Input MLP
-input_mlp_net = nn.Sequential(nn.Linear(input_size, 4 * input_size),
-                                       nn.ReLU(),
-                                       nn.Linear(4 * input_size, hidden_size))
+# The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
-input_mlp_net.load_state_dict(pretrained_actor.input_mlp.state_dict())
+def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
+    input_mlp = TensorDictModule(
+                module=nn.Sequential(
+                    nn.Linear(input_size, 4*input_size),
+                    nn.ReLU(),
+                    nn.Linear(4 * input_size, hidden_size)
+                ),
+                in_keys=["observation"],
+                out_keys=[f"{prefix}_embed"],
+            )
+    LSTM = LSTMModule(
+                input_size=hidden_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                in_keys=[f"{prefix}_embed", f"{prefix}_rs", f"{prefix}_rc", "is_init"],
+                out_keys=[f"{prefix}_features", ("next", f"{prefix}_rs"), ("next", f"{prefix}_rc")],
+                recurrent_backend="auto",
+            )
+    if state_dict_lstm != None:
+        LSTM.lstm.load_state_dict(state_dict_lstm)
+    if state_dict_mlp != None:
+        input_mlp.module.load_state_dict(state_dict_mlp)
 
-input_mlp = TensorDictModule(
-    module=input_mlp_net,
-    in_keys=["observation"],
-    out_keys=["features"]
-)
+    return TensorDictSequential(
+        input_mlp,
+        LSTM
+    )
 
-# LSTM tensordict wrapper
-rec_core = LSTMModule(
-    input_size=hidden_size, 
-    hidden_size=hidden_size, 
-    num_layers=num_layers,
-    batch_first=True,
-    in_keys=["features", "rs_h", "rs_c"],
-    out_keys=["rec_output", ("next", "rs_h"), ("next", "rs_c")]
-)
-
-rec_core.lstm.load_state_dict(pretrained_actor.lstm.state_dict())
-
-# Action Head
 action_head_net = nn.Sequential(*[ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)])
 
 action_head = TensorDictModule(
     module=action_head_net,
-    in_keys=["rec_output"],
+    in_keys=["actor_features"],
     out_keys=["action_head_out"]
 )
 action_head_net.load_state_dict(pretrained_actor.res_blocks.state_dict())
@@ -151,70 +170,23 @@ fc_out_pol = TensorDictModule(
     out_keys=["probs"]
 )
 
-policy_module = TensorDictSequential(
-    input_mlp,
-    rec_core,
-    action_head,
-    fc_out_pol
-)
+actor_rec = recurrent_body("actor", state_dict_mlp=pretrained_actor.input_mlp.state_dict(), state_dict_lstm=pretrained_actor.lstm.state_dict())
 
 policy_module = ProbabilisticActor(
-    module=policy_module,
+    module=TensorDictSequential(
+        actor_rec,
+        action_head,
+        fc_out_pol
+    ),
     spec=env.action_spec,
     in_keys=["probs"],
     distribution_class=IndependentBernoulli,
     return_log_prob=True,
-    # we'll need the log-prob for the numerator of the importance weights
 )
 
-# Critic network
-
-# input_mlp_val = nn.Sequential(nn.Linear(input_size, 4 * input_size),
-#                                        nn.ReLU(),
-#                                        nn.Linear(4 * input_size, hidden_size))
-
-# input_mlp_val = TensorDictModule(
-#     module=input_mlp_net,
-#     in_keys=["observation"],
-#     out_keys=["features_val"]
-# )
-
-# # LSTM tensordict wrapper
-# rec_core_val = LSTMModule(
-#     input_size=hidden_size, 
-#     hidden_size=hidden_size, 
-#     num_layers=num_layers,
-#     batch_first=True,
-#     in_keys=["features_val", "rs_h_val", "rs_c_val", "is_init"],
-#     out_keys=["rec_output_val", ("next", "rs_h_val"), ("next", "rs_c_val")]
-# )
-
-# fc_out_val = nn.Sequential(nn.ReLU(), nn.Linear(hidden_size, 1))
-# fc_out_val = TensorDictModule(
-#     module=fc_out_val,
-#     in_keys=["rec_output_val"],
-#     out_keys=["state_value"]
-# )
-
-# value_module = TensorDictSequential(
-#     input_mlp_val,
-#     rec_core_val,
-#     fc_out_val
-# )
-
-value_net = nn.Sequential(
-    nn.LazyLinear(hidden_size, device=device),
-    nn.Tanh(),
-    nn.LazyLinear(hidden_size, device=device),
-    nn.Tanh(),
-    nn.LazyLinear(hidden_size, device=device),
-    nn.Tanh(),
-    nn.LazyLinear(1, device=device),
-)
-
-value_module = ValueOperator(
-    module=value_net,
-    in_keys=["rs_h"],
+value_module = TensorDictSequential(
+    recurrent_body("critic"),
+    ValueOperator(nn.Linear(hidden_size, 1), in_keys=["critic_features"]),
 )
 
 print("Running policy:", policy_module(env.reset()))
@@ -222,7 +194,7 @@ print("Running value:", value_module(env.reset()))
 
 # initialize PPO loss and advantage modules
 advantage_module = GAE(
-    gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True, device=device,
+    gamma=gamma, lmbda=lmbda, value_network=value_module, average_gae=True, device=device, deactivate_vmap=True,
 )
 
 loss_module = ClipPPOLoss(
@@ -252,6 +224,7 @@ collector = Collector(
     total_frames=total_frames,
     split_trajs=False,
     device=device,
+    auto_register_policy_transforms=True,
 )
 
 logs = defaultdict(list)
@@ -299,7 +272,7 @@ for i, tensordict_data in enumerate(collector):
             optim.zero_grad()
 
             # Unfreeze this mf actor
-            if grad_pol and es.early_stop(loss_vals["loss_critic"]):
+            if not grad_pol and es.early_stop(loss_vals["loss_critic"]):
                 policy_module.requires_grad_(True)
 
     logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).mean())
