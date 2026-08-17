@@ -7,6 +7,8 @@ import win32api
 import win32con
 from tensordict import TensorDict
 import numpy as np
+import gymnasium as gym
+from gymnasium.spaces import Box
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 from model import LSTM, reward
@@ -24,6 +26,63 @@ device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 128
 out_size = 12 # number of pressable buttons same as targets
 threshold = 0.3
+
+class SelfPlayLSTMWrapper(gym.Wrapper):
+    def __init__(self, env, lstm_model, hidden_size, num_layers):
+        super().__init__(env)
+        self.model = lstm_model
+        self.hidden = torch.zeros(num_layers, 1, hidden_size)
+        self.memory = torch.zeros(num_layers, 1, hidden_size)
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
+        self.current_observation = torch.zeros(26, dtype=torch.float32)
+        self.previous_player_action = np.zeros(10, dtype=np.float32)
+        
+        # Set obs space
+        mins = np.array([-np.inf] * 16 + [0] * 10, dtype=np.float32)
+        maxs = np.array([np.inf] * 16 + [1] * 10, dtype=np.float32)
+
+        self.observation_space = Box(low=mins, high=maxs, dtype=np.float32)
+
+    def reset(self, *, seed=None, options=None):
+        self.hidden = torch.zeros(self.num_layers, 1, self.hidden_size)
+        self.memory = torch.zeros(self.num_layers, 1, self.hidden_size)
+        
+        obs, info = self.env.reset(seed=seed, options=options)
+        
+        # Format and force float32 array output
+        obs = np.concatenate([obs["player_state"], obs['opponent_state'], obs['opponent_inputs']]).astype(np.float32)
+        self.current_observation = torch.from_numpy(normalize(obs)).float()
+        self.previous_player_action = np.zeros(10, dtype=np.float32)
+        
+        return obs, info
+
+    def step(self, action_player):
+        # Convert previous action to float32 tensor matching self.current_observation
+        prev_act_tensor = torch.from_numpy(self.previous_player_action).float()
+        opp_obs = torch.cat((self.current_observation[8:16], self.current_observation[:8], prev_act_tensor))
+        
+        # Predict opponent action
+        out, self.hidden, self.memory = self.model(
+            opp_obs.unsqueeze(0).unsqueeze(0), 
+            self.hidden, 
+            self.memory, 
+            act_last_layer=True
+        )
+        action_opponent = format_pred_env(out.reshape(-1), threshold)
+        
+        # Step base environment
+        kwargs = {
+            "action_player": action_player,
+            "action_opp": action_opponent
+        }
+        obs, reward, done, trunc, info = self.env.unwrapped.step(**kwargs)
+        
+        obs = np.concatenate([obs["player_state"], obs['opponent_state'], obs['opponent_inputs']]).astype(np.float32)
+        self.current_observation = torch.from_numpy(normalize(obs)).float()
+        self.previous_player_action = np.array(action_player, dtype=np.float32)
+        
+        return obs, reward, done, trunc, info
 
 def normalize(obs):
     MAX_X = 928
@@ -161,151 +220,3 @@ class GameState():
         self.feats[10] = self.P2.health
         self.feats[11] = self.P2.meter
         self.feats[12] = self.P2.stun
-
-def get_trajectories_vs_CPU(model, hidden_size, device, frame_num, CPU=True):
-    
-    hidden = torch.zeros(1, 1, hidden_size, device=device)
-    memory = torch.zeros(1, 1, hidden_size, device=device)
-    batch = TensorDict({
-        "states": torch.zeros(frame_num, 28),
-        "actions": torch.zeros(frame_num, 12),
-        "rewards": torch.zeros(frame_num, 1),
-        "dones": torch.zeros(frame_num, 1)
-    },
-    batch_size=[frame_num])
-    current_frame = 0
-
-    
-    while current_frame < frame_num:
-        # start emulator
-        emu_proc = subprocess.Popen(["./fbneo/fcadefbneo.exe", "sfiii3nr1", "./model_game_interface.lua"])
-
-        round_counter = 0
-        match_finished = False
-        match_start_frame = current_frame
-        # establish tcp connection
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((HOST,PORT))
-            s.settimeout(10)
-            # game loop
-            while not match_finished and (current_frame < frame_num):
-                try:
-                    s.listen()
-                    conn, addr = s.accept()
-                    with conn:
-                        while current_frame < frame_num:
-                            try:
-                                data = conn.recv(100)
-                                # catch graceful disconnection
-                                if not data:
-                                    print(f"Client {addr} disconnected gracefully.")
-                                    break
-                                
-                                data = data.decode('utf-8')
-
-                                # if data contains 'R' then the round is over and we store the trajectory before moving on to the next
-                                if data[-1] == 'R':
-                                    round_counter += 1
-                                    data = data.replace('#', '')
-                                    print(data)
-                                    state = GameState(data[:-1])
-                                    print(state.feats)
-                                    state.normalize()
-                                    # compute reward
-                                    previous_state = batch["states"][current_frame - 1]
-                                    r = reward(previous_state, state.feats)
-                                    # update main variables
-                                    batch["rewards"][current_frame] = r
-                                    batch["dones"][current_frame] = 1
-                                    batch["states"][current_frame] = torch.tensor(state.feats)
-                                    batch["actions"][current_frame] = batch["actions"][current_frame-1] # duplicate last model output so states and actions have the same length
-                                    # Send the player inputs for the last frame otherwise the lua script throws a tantrum
-                                    conn.send(bytes(format_pred(torch.zeros(12), threshold) + '\r\n', "utf-8"))
-                                    
-                                    # if 2 rounds have been played then count it as a finished match and start another instance of emulator
-                                    if round_counter >= 2:
-                                        match_finished = True
-                                        round_counter = 0
-                                        break
-                                else:
-                                    # decode the string and remove the padding
-                                    data = data.replace('#', '')
-                                    state = GameState(data)
-                                    state.normalize()
-
-                                    # calculate the reward and update environment variables
-                                    if current_frame - match_start_frame > 0:
-                                        previous_state = batch["states"][current_frame - 1]
-                                        r = reward(previous_state, state.feats)
-                                        batch["rewards"][current_frame] = r
-                                    batch["states"][current_frame] = torch.tensor(state.feats)
-                                    
-                                    # feed to lstm
-                                    lstm_input = torch.tensor(state.feats, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                                    player_inputs, hidden, memory = model(lstm_input, hidden, memory, act_last_layer=True)
-                                    player_inputs = player_inputs.squeeze(0).squeeze(0)
-                                    batch["actions"][current_frame] = player_inputs
-                                    # send through the socket as a comma separated list of numbers
-                                    conn.send(bytes(format_pred(player_inputs, threshold) + '\r\n', "utf-8"))
-                                
-                                current_frame += 1
-                            except (ConnectionResetError, BrokenPipeError) as e:
-                                # catch abrupt network cut
-                                print(f"Connection with {addr} was interrupted abruptly: {e}")
-                                break
-                except(TimeoutError):
-                    print('TIMEOUTTTTT')
-                    break
-            
-        win32gui.EnumWindows(enumWindowsProc, emu_proc.pid)
-
-    return batch
-
-def free_play(model):
-    
-    hidden = torch.zeros(1, 1, hidden_size, device=device)
-    memory = torch.zeros(1, 1, hidden_size, device=device)
-
-    # start emulator
-    subprocess.Popen(["./fbneo/fcadefbneo.exe", "sfiii3nr1", "./sf3_env.lua"])
-
-    # establish tcp connection
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((HOST,PORT))
-        s.settimeout(10)
-        # game loop
-        while True:
-            try:
-                s.listen()
-                conn, addr = s.accept()
-                with conn:
-                    while True:
-                        try:
-                            data = conn.recv(100)
-                            # catch graceful disconnection
-                            if not data:
-                                print(f"Client {addr} disconnected gracefully.")
-                                break
-                            
-                            data = data.decode('utf-8')
-                        
-                            # decode the string and remove the padding
-                            data = data.replace('#', '')
-                            state = GameState(data)
-                            state.normalize()
-                            
-                            # feed to lstm
-                            lstm_input = torch.tensor(state.feats, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                            player_inputs, hidden, memory = model(lstm_input, hidden, memory, act_last_layer=True)
-                            player_inputs = player_inputs.reshape(-1)
-
-                            # send through the socket as a comma separated list of numbers
-                            conn.send(bytes(format_pred(player_inputs, threshold) + '\r\n', "utf-8"))
-
-                        except (ConnectionResetError, BrokenPipeError) as e:
-                            # catch abrupt network cut
-                            print(f"Connection with {addr} was interrupted abruptly: {e}")
-                            break
-            except(TimeoutError):
-                print('TIMEOUTTTTT')
-                break

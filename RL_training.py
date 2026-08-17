@@ -19,7 +19,6 @@ from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration
 from torchrl.collectors import Collector
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
-from torchrl.modules.utils import get_primers_from_module
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 from tqdm import tqdm
@@ -32,7 +31,7 @@ from torchrl.envs import GymWrapper
 from model import LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-from util import  EarlyStopping
+from util import EarlyStopping, SelfPlayLSTMWrapper
 
 class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
@@ -82,11 +81,24 @@ num_cells = 256  # number of cells in each layer i.e. output dim.
 lr = 3e-6
 max_grad_norm = 1.0
 
-# Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
-base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="cpu")
-flat_env = FlattenObservation(base_env)
+# HyperParameters
+num_layers = 2
+hidden_size = 512
+input_size = 26
+actor_output_size = 10
+num_blocks = 1
 
-torch_env = GymWrapper(flat_env)
+# Load pre trained weights to actor and transfer them to each individual component of the model
+pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
+checkpoint = torch.load(ch_path, map_location=device)
+pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
+
+# Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
+base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="selfplay")
+# Create and load opponent model
+self_play_env = SelfPlayLSTMWrapper(base_env, pretrained_actor, hidden_size, num_layers)
+
+torch_env = GymWrapper(self_play_env)
 
 env = TransformedEnv(
     torch_env,
@@ -107,19 +119,6 @@ print("action_spec (as defined by input_spec):", env.action_spec)
 
 check_env_specs(env)
 # Set up Actor and Critic networks
-
-# HyperParameters
-num_layers = 2
-hidden_size = 512
-input_size = 26
-actor_output_size = 10
-num_blocks = 1
-
-# Load pre trained weights to actor and transfer them to each individual component of the model
-pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
-checkpoint = torch.load(ch_path, map_location=device)
-pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
-
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
 def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
