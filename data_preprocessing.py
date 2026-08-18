@@ -11,9 +11,10 @@ MAX_Y = 226
 MIN_Y = -42
 
 class MatchDataset(Dataset):
-    def __init__(self, dir_path):
+    def __init__(self, dir_path, autoregressive=False):
         self.dir_path = dir_path
         self.file_names = os.listdir(dir_path)
+        self.autoregressive = autoregressive
 
         # extract max values for normalization
         max_posX = np.zeros((len(self.file_names)))
@@ -67,9 +68,13 @@ class MatchDataset(Dataset):
         # normalize scalar features
         target_data = self.norm_scalar_features(target_data)
         opponent_data = self.norm_scalar_features(opponent_data)
-        
-        states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
-    
+
+        if not self.autoregressive:
+            states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
+        else: 
+            target_data_next = target_data[1:-1]
+            states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
+                
         return torch.tensor(states.values, dtype=torch.float32), torch.tensor(labels.values, dtype=torch.float32)
 
     def get_max_seq_len(self):
