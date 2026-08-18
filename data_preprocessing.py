@@ -71,10 +71,14 @@ class MatchDataset(Dataset):
 
         if not self.autoregressive:
             states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
-        else: 
-            target_data_next = target_data[1:-1]
-            states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']]], axis=1)
-                
+        else:
+            zero_data = np.zeros(shape=(1,10), dtype=np.int8)
+            feature_list = ['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']
+            d = pd.DataFrame(zero_data, columns=feature_list)
+            prev_button_press = pd.concat([d, target_data[['Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']][:-1]]).reset_index(drop=True)
+
+            states = pd.concat([target_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown']], opponent_data[['PosX','PosY','Health','Meter','Stun','isStunned','Hit','Thrown','Left','Up','Right','Down','Lp','Mp','Hp','Lk','Mk','Hk']], prev_button_press], axis=1)
+
         return torch.tensor(states.values, dtype=torch.float32), torch.tensor(labels.values, dtype=torch.float32)
 
     def get_max_seq_len(self):
