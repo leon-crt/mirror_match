@@ -31,7 +31,7 @@ from torchrl.envs import GymWrapper
 from model import LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-from util import EarlyStopping, SelfPlayLSTMWrapper
+from util import EarlyStopping, SelfPlayLSTMWrapper, transpose_weights_nn_to_rl
 
 class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
@@ -54,7 +54,7 @@ class CriticHead(nn.Module):
         x = self.act(self.fc1(x))
         return self.out(x)
 
-ch_path = 'checkpoints/checkpoint_final'
+ch_path = 'checkpoints/RL/Harmonaz-lvl1/checkpoint_190'
 plots_dir = "plots/RL/"
 
 # Hyperparameters definition
@@ -91,7 +91,7 @@ num_blocks = 1
 # Load pre trained weights to actor and transfer them to each individual component of the model
 pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
 checkpoint = torch.load(ch_path, map_location=device)
-pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
+pretrained_actor = transpose_weights_nn_to_rl(checkpoint, pretrained_actor)
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
 base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="selfplay")
@@ -109,7 +109,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=frames_per_batch)
+env.transform[0].init_stats(num_iter=frames_per_batch*3)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -188,6 +188,8 @@ value_module = TensorDictSequential(
     ValueOperator(nn.Linear(hidden_size, 1), in_keys=["critic_features"]),
 )
 
+value_module.load_state_dict(checkpoint['critic_state_dict'])
+
 print("Running policy:", policy_module(env.reset()))
 print("Running value:", value_module(env.reset()))
 
@@ -231,9 +233,9 @@ pbar = tqdm(total=total_frames)
 eval_str = ""
 
 # Freeze policy module until critic is up to speed
-policy_module.requires_grad_(False)
-grad_pol = False
-es = EarlyStopping(min_delta=0.1, tolerance=3)
+# policy_module.requires_grad_(False)
+# grad_pol = False
+# es = EarlyStopping(min_delta=0.1, tolerance=3)
 
 # We iterate over the collector until it reaches the total number of frames it was
 # designed to collect:
@@ -271,8 +273,8 @@ for i, tensordict_data in enumerate(collector):
             optim.zero_grad()
 
             # Unfreeze this mf actor
-            if not grad_pol and es.early_stop(loss_vals["loss_critic"]):
-                policy_module.requires_grad_(True)
+            # if not grad_pol and es.early_stop(loss_vals["loss_critic"]):
+            #     policy_module.requires_grad_(True)
 
     logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).mean())
     logs["loss_critic"].append(np.array(epoch_loss["loss_critic"]).mean())
@@ -338,3 +340,14 @@ for i, tensordict_data in enumerate(collector):
     # We're also using a learning rate scheduler. Like the gradient clipping,
     # this is a nice-to-have but nothing necessary for PPO to work.
     scheduler.step()
+
+# Save parameters
+filename = 'checkpoint_' + str(i) + '_final'
+checkpoint = {
+    "epoch": epoch + 1,
+    'model_state_dict': policy_module.state_dict(),
+    'critic_state_dict': value_module.state_dict(),
+    'loss': loss_value
+}
+
+torch.save(checkpoint, f'./checkpoints/RL/{filename}')
