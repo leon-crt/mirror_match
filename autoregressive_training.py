@@ -13,9 +13,6 @@ from data_preprocessing import MatchDataset, pad_collate
 from model import LSTM
 from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 
-# TODO: 
-#       - implement the ground truth being the autoregressive lstm input
-
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
