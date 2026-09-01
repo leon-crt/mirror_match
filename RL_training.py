@@ -17,7 +17,7 @@ from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
                           TransformedEnv, InitTracker)
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
 from torchrl.collectors import Collector
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModule, TensorDictSequential 
 from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
@@ -27,11 +27,13 @@ from torch.distributions import Bernoulli, Independent
 import gymnasium
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs import GymWrapper
+from torchrl.envs.transforms import CatTensors
 
 from model import LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-from util import EarlyStopping, SelfPlayLSTMWrapper, transpose_weights_nn_to_rl
+from util import EarlyStopping, SelfPlayLSTMWrapper
+from rl_util import transpose_weights_nn_to_rl, MaskInitState, InitZeroState
 
 class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
@@ -54,8 +56,9 @@ class CriticHead(nn.Module):
         x = self.act(self.fc1(x))
         return self.out(x)
 
-ch_path = 'checkpoints/RL/Harmonaz-lvl1/checkpoint_190'
+ch_path = 'checkpoints/Harmonaz-tf-512-2/checkpoint_249'
 plots_dir = "plots/RL/"
+rl_weights = False
 
 # Hyperparameters definition
 frames_per_batch = 5000
@@ -84,19 +87,22 @@ max_grad_norm = 1.0
 # HyperParameters
 num_layers = 2
 hidden_size = 512
-input_size = 26
+input_size = 36
 actor_output_size = 10
 num_blocks = 1
 
 # Load pre trained weights to actor and transfer them to each individual component of the model
 pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
 checkpoint = torch.load(ch_path, map_location=device)
-pretrained_actor = transpose_weights_nn_to_rl(checkpoint, pretrained_actor)
+if rl_weights:
+    pretrained_actor = transpose_weights_nn_to_rl(checkpoint, pretrained_actor)
+else:
+    pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
 base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="selfplay")
 # Create and load opponent model
-self_play_env = SelfPlayLSTMWrapper(base_env, pretrained_actor, hidden_size, num_layers)
+self_play_env = SelfPlayLSTMWrapper(base_env, pretrained_actor, hidden_size, num_layers, 0.49)
 
 torch_env = GymWrapper(self_play_env)
 
@@ -106,6 +112,7 @@ env = TransformedEnv(
         ObservationNorm(in_keys=["observation"]),
         InitTracker(),
         StepCounter(),
+        InitZeroState(keys=["actor_prev_output", "critic_prev_output"], feature_dims=[actor_output_size, 1]),
     ),
 )
 
@@ -122,14 +129,26 @@ check_env_specs(env)
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
 def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
+    reset_prev_out = TensorDictModule(
+        module=MaskInitState(),
+        in_keys=[f"{prefix}_prev_output", "is_init"],
+        out_keys=[f"{prefix}_prev_output_clean"],
+    )
+
+    cat_module = CatTensors(
+        in_keys=["observation", f"{prefix}_prev_output_clean"],
+        out_key=f"{prefix}_cat_input",
+        dim=-1,
+    )
+
     input_mlp = TensorDictModule(
                 module=nn.Sequential(
                     nn.Linear(input_size, 4*input_size),
                     nn.ReLU(),
                     nn.Linear(4 * input_size, hidden_size)
                 ),
-                in_keys=["observation"],
-                out_keys=[f"{prefix}_embed"],
+                in_keys=[f"{prefix}_cat_input"],
+                out_keys=[f"{prefix}_embed"]
             )
     LSTM = LSTMModule(
                 input_size=hidden_size,
@@ -140,14 +159,17 @@ def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
                 out_keys=[f"{prefix}_features", ("next", f"{prefix}_rs"), ("next", f"{prefix}_rc")],
                 recurrent_backend="auto",
             )
+
     if state_dict_lstm != None:
         LSTM.lstm.load_state_dict(state_dict_lstm)
     if state_dict_mlp != None:
         input_mlp.module.load_state_dict(state_dict_mlp)
 
     return TensorDictSequential(
+        reset_prev_out,
+        cat_module,
         input_mlp,
-        LSTM
+        LSTM,
     )
 
 action_head_net = nn.Sequential(*[ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)])
@@ -169,13 +191,20 @@ fc_out_pol = TensorDictModule(
     out_keys=["probs"]
 )
 
+actor_feedback_module = TensorDictModule(
+    module=nn.Identity(),
+    in_keys=["probs"],
+    out_keys=[("next", "actor_prev_output")],
+)
+
 actor_rec = recurrent_body("actor", state_dict_mlp=pretrained_actor.input_mlp.state_dict(), state_dict_lstm=pretrained_actor.lstm.state_dict())
 
 policy_module = ProbabilisticActor(
     module=TensorDictSequential(
         actor_rec,
         action_head,
-        fc_out_pol
+        fc_out_pol,
+        actor_feedback_module
     ),
     spec=env.action_spec,
     in_keys=["probs"],
@@ -183,8 +212,15 @@ policy_module = ProbabilisticActor(
     return_log_prob=True,
 )
 
+critic_feedback_module = TensorDictModule(
+    module=nn.Identity(),
+    in_keys=["critic_features"],
+    out_keys=[("next", "critic_prev_output")]
+)
+
 value_module = TensorDictSequential(
     recurrent_body("critic"),
+    critic_feedback_module,
     ValueOperator(nn.Linear(hidden_size, 1), in_keys=["critic_features"]),
 )
 
