@@ -17,21 +17,22 @@ from util import transpose_weights_nn_to_rl
 #       - check for super usage (during one frame there was x amount of gauge and the next is decreased a lot)
 
 # params
-max_rounds = 1
+max_rounds = 2
 
 # model init
-in_size = 26
+in_size = 36
 hidden_size = 512
 out_size = 10
 num_layers = 2
 model = LSTM(input_size=in_size, output_size=out_size, num_layers=num_layers, hidden_size=hidden_size)
 hidden = torch.zeros([num_layers, 1, hidden_size])
 memory = torch.zeros([num_layers, 1, hidden_size])
-threshold = 0.49
-RL_weights = True
+threshold = 0.5
+RL_weights = False
+autoreg = True
 
 device = torch.device("cpu")
-ch_path = 'checkpoints/RL/checkpoint_199_final'
+ch_path = 'checkpoints/checkpoint_249'
 checkpoint = torch.load(ch_path, map_location=device)
 if RL_weights:
     model = transpose_weights_nn_to_rl(checkpoint, model)
@@ -46,6 +47,7 @@ state, info = env.reset()
 log_rewards = []
 done = False
 round_number = 0
+out = torch.zeros((10,))
 
 # logger variables
 log = {
@@ -58,11 +60,14 @@ log = {
 while(round_number < max_rounds):
     state = normalize(state)
     state = torch.tensor(state, dtype=torch.float32)
+    if autoreg:
+        state = torch.concat((state, out))
     out, hidden, memory = model(state.unsqueeze(0).unsqueeze(0), hidden, memory, act_last_layer=True)
-    action = format_pred_env(out.reshape(-1), threshold)
+    out = out.reshape(-1)
+    action = format_pred_env(out, threshold)
     state, reward, done, _, info = env.step(action) 
     # log stuff
-    log["states"].append(state)
+    log["states"].append(state.copy())
     log["model_action_code"].append(info["modelAction"])
     log["model_action_group"].append(info["modelActionGroup"])
     log["done"].append(done)
@@ -118,13 +123,13 @@ for frame in range(len(log["done"]) - 1):
         continue
 
     # Jumping state management and antiair detection
-    if not jumping_opp and state_opp[1] > 20 and not hit_opp:
+    if not jumping_opp and state_opp[1] > 30 and not hit_opp:
         jumping_opp = True
     if jumping_opp:
         if hit_opp:
             antiair_count += 1
             jumping_opp = False
-        elif state_opp[1] <= 0:
+        elif state_opp[1] <= 10:
             jumping_opp = False
 
     # check for combo length by checking if state changes between 4 and 5 while opponent is hit
@@ -165,4 +170,4 @@ print(f"Number of performed throw techs: {throw_tech_count}")
 print(f"Number of performed ground techs: {ground_tech_count}")
 print(f"Number of performed parries: {parry_count}")
 print(f"Number of max combo hits: {max_combo_len}")
-print(f"Number of max combos performed: {performed_combos_count}")
+print(f"Number of combos performed: {performed_combos_count}")
