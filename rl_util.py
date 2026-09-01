@@ -5,6 +5,7 @@ from torchrl.envs.transforms import Transform
 from torch.distributions import Bernoulli, Independent
 from tensordict.nn import TensorDictModule, TensorDictSequential
 import torch
+from torchrl.data import UnboundedContinuous
 
 MAX_X = 928
 MIN_X = 93
@@ -24,28 +25,54 @@ num_layers = 2
 num_blocks= 1
 
 class InitZeroState(Transform):
-    """Initializes specified keys with zero tensors on env.reset()."""
-    def __init__(self, keys: list, feature_dims: int):
-        super().__init__()
+    def __init__(self, keys: list[str], feature_dims: list[int]):
+        # Inform TorchRL which keys this transform outputs
+        super().__init__(out_keys=keys)
         self.keys = keys
         self.feature_dims = feature_dims
 
     def _reset(self, tensordict, tensordict_reset):
-        # Infer device and batch size directly from the reset TensorDict
         batch_shape = tensordict_reset.shape
         device = tensordict_reset.device
 
-        zeros = []
-        for feature_dim in self.feature_dims:
-            zeros.append(torch.zeros(
+        for key, feature_dim in zip(self.keys, self.feature_dims):
+            zeros = torch.zeros(
                 (*batch_shape, feature_dim), 
                 device=device, 
                 dtype=torch.float32
-            ))
-        for i in range(len(self.keys)):
-            tensordict_reset.set(self.keys[i], zeros[i])
+            )
+            tensordict_reset.set(key, zeros)
 
         return tensordict_reset
+
+    def _step(self, tensordict, next_tensordict):
+        # Ensures keys are present during env.step() when check_env_specs steps without a policy
+        batch_shape = next_tensordict.shape
+        device = next_tensordict.device
+
+        for key, feature_dim in zip(self.keys, self.feature_dims):
+            if key not in next_tensordict.keys():
+                zeros = torch.zeros(
+                    (*batch_shape, feature_dim), 
+                    device=device, 
+                    dtype=torch.float32
+                )
+                next_tensordict.set(key, zeros)
+
+        return next_tensordict
+
+    def transform_observation_spec(self, observation_spec):
+        observation_spec = observation_spec.clone()
+        batch_shape = observation_spec.shape
+
+        for key, feature_dim in zip(self.keys, self.feature_dims):
+            spec_shape = (*batch_shape, feature_dim)
+            observation_spec[key] = UnboundedContinuous(
+                shape=spec_shape,
+                device=observation_spec.device,
+                dtype=torch.float32,
+            )
+        return observation_spec
 
 class MaskInitState(nn.Module):
     """Zeros out previous outputs whenever is_init is True."""

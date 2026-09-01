@@ -1,17 +1,10 @@
 import SF3_environment as SF3Env
 from SF3_environment.wrappers import FlattenObservation
 import torch
-import matplotlib.pyplot as plt
 from model import LSTM
-import numpy as np
 from util import format_pred_env, normalize
-from util import recurrent_body, IndependentBernoulli
 import gymnasium
-from torch import nn
-from tensordict.nn import TensorDictModule, TensorDictSequential
-from model import ResBlockMLP
-from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule
-from util import transpose_weights_nn_to_rl
+from rl_util import transpose_weights_nn_to_rl
 
 # TODO:
 #       - check for super usage (during one frame there was x amount of gauge and the next is decreased a lot)

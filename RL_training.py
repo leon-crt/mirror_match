@@ -56,7 +56,7 @@ class CriticHead(nn.Module):
         x = self.act(self.fc1(x))
         return self.out(x)
 
-ch_path = 'checkpoints/Harmonaz-tf-512-2/checkpoint_249'
+ch_path = 'checkpoints/saved/Harmonaz_base_249'
 plots_dir = "plots/RL/"
 rl_weights = False
 
@@ -71,8 +71,8 @@ clip_epsilon = (
     0.2  # clip value for PPO loss: see the equation in the intro for more context.
 )
 gamma = 0.99
-lmbda = 0.95
-entropy_eps = 1e-4
+lmbda = 0.85
+entropy_eps = 1e-6
 
 is_fork = multiprocessing.get_start_method() == "fork"
 device = (
@@ -110,9 +110,9 @@ env = TransformedEnv(
     torch_env,
     Compose(
         ObservationNorm(in_keys=["observation"]),
+        InitZeroState(keys=["actor_prev_output", "critic_prev_output"], feature_dims=[actor_output_size, 1]),
         InitTracker(),
         StepCounter(),
-        InitZeroState(keys=["actor_prev_output", "critic_prev_output"], feature_dims=[actor_output_size, 1]),
     ),
 )
 
@@ -128,7 +128,7 @@ check_env_specs(env)
 # Set up Actor and Critic networks
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
-def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
+def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=None):
     reset_prev_out = TensorDictModule(
         module=MaskInitState(),
         in_keys=[f"{prefix}_prev_output", "is_init"],
@@ -219,12 +219,13 @@ critic_feedback_module = TensorDictModule(
 )
 
 value_module = TensorDictSequential(
-    recurrent_body("critic"),
+    recurrent_body("critic", input_size=27, state_dict_mlp=pretrained_actor.input_mlp.state_dict()),
     critic_feedback_module,
     ValueOperator(nn.Linear(hidden_size, 1), in_keys=["critic_features"]),
 )
 
-value_module.load_state_dict(checkpoint['critic_state_dict'])
+if rl_weights:
+    value_module.load_state_dict(checkpoint['critic_state_dict'])
 
 print("Running policy:", policy_module(env.reset()))
 print("Running value:", value_module(env.reset()))
@@ -265,8 +266,11 @@ collector = Collector(
 )
 
 logs = defaultdict(list)
+actor_frozen = True
+policy_module.requires_grad_(False)
 pbar = tqdm(total=total_frames)
 eval_str = ""
+critic_loss_target = 0.02
 
 # Freeze policy module until critic is up to speed
 # policy_module.requires_grad_(False)
@@ -281,11 +285,7 @@ for i, tensordict_data in enumerate(collector):
         # We'll need an "advantage" signal to make PPO work.
         # We re-compute it at each epoch as its value depends on the value
         # network which is updated in the inner loop.
-        a = tensordict_data["action"]
         advantage_module(tensordict_data)
-        advantage = tensordict_data.get(
-            "advantage", None, as_padded_tensor=True
-        )
         epoch_loss = defaultdict(list)
         replay_buffer.extend(tensordict_data.cpu())
         for _ in range(frames_per_batch // sub_batch_size):
@@ -311,6 +311,15 @@ for i, tensordict_data in enumerate(collector):
             # Unfreeze this mf actor
             # if not grad_pol and es.early_stop(loss_vals["loss_critic"]):
             #     policy_module.requires_grad_(True)
+
+    mean_critic_loss = np.mean(epoch_loss["loss_critic"])
+    logs["loss_critic"].append(mean_critic_loss)
+
+    # Check if critic loss has reached the target threshold
+    if actor_frozen and mean_critic_loss < critic_loss_target:
+        policy_module.requires_grad_(True)
+        actor_frozen = False
+        print(f"\n[Iteration {i}] Critic loss reached {mean_critic_loss:.4f}. Unfreezing actor.")
 
     logs["loss_objective"].append(np.array(epoch_loss["loss_objective"]).mean())
     logs["loss_critic"].append(np.array(epoch_loss["loss_critic"]).mean())
