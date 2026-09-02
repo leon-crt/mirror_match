@@ -21,7 +21,7 @@ RL_weights = False
 autoreg = True
 
 device = torch.device("cpu")
-ch_path = 'checkpoints/checkpoint_209'
+ch_path = 'checkpoints/saved/Harmonaz_base_249'
 checkpoint = torch.load(ch_path, map_location=device) 
 if RL_weights:
     model = transpose_weights_nn_to_rl(checkpoint, model)

@@ -73,6 +73,7 @@ clip_epsilon = (
 gamma = 0.99
 lmbda = 0.85
 entropy_eps = 1e-6
+temperature = 0.33 
 
 is_fork = multiprocessing.get_start_method() == "fork"
 device = (
@@ -116,7 +117,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=frames_per_batch*3)
+env.transform[0].init_stats(num_iter=10)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -184,16 +185,31 @@ action_head_net.load_state_dict(pretrained_actor.res_blocks.state_dict())
 # Output layer
 lin_out_layer = nn.Linear(hidden_size, actor_output_size)
 lin_out_layer.load_state_dict(pretrained_actor.fc_out.state_dict())
-fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer, nn.Sigmoid())
+fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer)
+
+class TemperatureModule(nn.Module):
+    def __init__(self, temp):
+        super(TemperatureModule, self).__init__()
+        self.temp = temp
+
+    def forward(self, logits):
+        return logits / self.temp
+
+temp_module = TensorDictModule(
+    module=TemperatureModule(temperature),
+    in_keys=["raw_logits"],
+    out_keys=["logits"]
+)
+
 fc_out_pol = TensorDictModule(
     module=fc_out_pol_net,
     in_keys=["action_head_out"],
-    out_keys=["probs"]
+    out_keys=["raw_logits"]
 )
 
 actor_feedback_module = TensorDictModule(
     module=nn.Identity(),
-    in_keys=["probs"],
+    in_keys=["logits"],
     out_keys=[("next", "actor_prev_output")],
 )
 
@@ -204,10 +220,11 @@ policy_module = ProbabilisticActor(
         actor_rec,
         action_head,
         fc_out_pol,
+        temp_module,
         actor_feedback_module
     ),
     spec=env.action_spec,
-    in_keys=["probs"],
+    in_keys=["logits"],
     distribution_class=IndependentBernoulli,
     return_log_prob=True,
 )
@@ -219,7 +236,7 @@ critic_feedback_module = TensorDictModule(
 )
 
 value_module = TensorDictSequential(
-    recurrent_body("critic", input_size=27, state_dict_mlp=pretrained_actor.input_mlp.state_dict()),
+    recurrent_body("critic", input_size=27),
     critic_feedback_module,
     ValueOperator(nn.Linear(hidden_size, 1), in_keys=["critic_features"]),
 )
