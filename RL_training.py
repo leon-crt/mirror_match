@@ -56,7 +56,7 @@ class CriticHead(nn.Module):
         x = self.act(self.fc1(x))
         return self.out(x)
 
-ch_path = 'checkpoints/saved/Harmonaz_base_249'
+ch_path = 'checkpoints/Harmonaz-tf-512-2/checkpoint_249'
 plots_dir = "plots/RL/"
 rl_weights = False
 
@@ -72,8 +72,8 @@ clip_epsilon = (
 )
 gamma = 0.99
 lmbda = 0.85
-entropy_eps = 1e-6
-temperature = 0.33 
+entropy_eps = 1e-10
+temperature = 1.0
 
 is_fork = multiprocessing.get_start_method() == "fork"
 device = (
@@ -117,7 +117,7 @@ env = TransformedEnv(
     ),
 )
 
-env.transform[0].init_stats(num_iter=10)
+env.transform[0].init_stats(num_iter=frames_per_batch*3)
 
 print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
@@ -140,6 +140,7 @@ def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=N
         in_keys=["observation", f"{prefix}_prev_output_clean"],
         out_key=f"{prefix}_cat_input",
         dim=-1,
+        del_keys=False
     )
 
     input_mlp = TensorDictModule(
@@ -287,7 +288,7 @@ actor_frozen = True
 policy_module.requires_grad_(False)
 pbar = tqdm(total=total_frames)
 eval_str = ""
-critic_loss_target = 0.02
+critic_loss_target = 0.007
 
 # Freeze policy module until critic is up to speed
 # policy_module.requires_grad_(False)
