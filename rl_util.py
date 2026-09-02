@@ -20,7 +20,7 @@ device = torch.device(0 if torch.cuda.is_available() else 'cpu')
 hidden_size = 512
 out_size = 10 # number of pressable buttons same as targets
 threshold = 0.3
-input_size = 26
+input_size = 36
 num_layers = 2
 num_blocks= 1
 
