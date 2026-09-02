@@ -208,8 +208,12 @@ fc_out_pol = TensorDictModule(
     out_keys=["raw_logits"]
 )
 
+class SigmoidModule(nn.Module):
+    def forward(self, logits):
+        return torch.sigmoid(logits)
+
 actor_feedback_module = TensorDictModule(
-    module=nn.Identity(),
+    module=SigmoidModule(),
     in_keys=["logits"],
     out_keys=[("next", "actor_prev_output")],
 )
