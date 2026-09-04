@@ -32,7 +32,7 @@ from torchrl.envs.transforms import CatTensors
 from model import LSTM, ResBlockMLP
 import SF3_environment
 from SF3_environment.wrappers import FlattenObservation
-from util import EarlyStopping, SelfPlayLSTMWrapper
+from util import EarlyStopping, SelfPlayLSTMWrapper, format_pred
 from rl_util import transpose_weights_nn_to_rl, MaskInitState, InitZeroState
 
 class IndependentBernoulli(Independent):
@@ -56,7 +56,7 @@ class CriticHead(nn.Module):
         x = self.act(self.fc1(x))
         return self.out(x)
 
-ch_path = 'checkpoints/Harmonaz-tf-512-2/checkpoint_249'
+ch_path = 'checkpoints/saved/Harmonaz_base_249'
 plots_dir = "plots/RL/"
 rl_weights = False
 
@@ -72,7 +72,7 @@ clip_epsilon = (
 )
 gamma = 0.99
 lmbda = 0.85
-entropy_eps = 1e-10
+entropy_eps = 1e-6
 temperature = 1.0
 
 is_fork = multiprocessing.get_start_method() == "fork"
@@ -101,7 +101,7 @@ else:
     pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
-base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="turbo", mode="selfplay")
+base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="selfplay")
 # Create and load opponent model
 self_play_env = SelfPlayLSTMWrapper(base_env, pretrained_actor, hidden_size, num_layers, 0.49)
 
@@ -110,16 +110,12 @@ torch_env = GymWrapper(self_play_env)
 env = TransformedEnv(
     torch_env,
     Compose(
-        ObservationNorm(in_keys=["observation"]),
         InitZeroState(keys=["actor_prev_output", "critic_prev_output"], feature_dims=[actor_output_size, 1]),
         InitTracker(),
         StepCounter(),
     ),
 )
 
-env.transform[0].init_stats(num_iter=frames_per_batch*3)
-
-print("normalization constant shape:", env.transform[0].loc.shape)
 print("observation_spec:", env.observation_spec)
 print("reward_spec:", env.reward_spec)
 print("input_spec:", env.input_spec)
@@ -129,6 +125,11 @@ check_env_specs(env)
 # Set up Actor and Critic networks
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
+class InputCat(nn.Module):
+    def forward(self, observation, actor_prev_output_clean):
+        catInp = torch.cat((observation, actor_prev_output_clean))
+        return catInp
+
 def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=None):
     reset_prev_out = TensorDictModule(
         module=MaskInitState(),
@@ -136,11 +137,10 @@ def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=N
         out_keys=[f"{prefix}_prev_output_clean"],
     )
 
-    cat_module = CatTensors(
+    cat_module = TensorDictModule(
+        module=InputCat(),
         in_keys=["observation", f"{prefix}_prev_output_clean"],
-        out_key=f"{prefix}_cat_input",
-        dim=-1,
-        del_keys=False
+        out_keys=f"{prefix}_cat_input",
     )
 
     input_mlp = TensorDictModule(
@@ -209,12 +209,13 @@ fc_out_pol = TensorDictModule(
 )
 
 class SigmoidModule(nn.Module):
-    def forward(self, logits):
-        return torch.sigmoid(logits)
+    def forward(self, logits, observation, actor_inp):
+        probs = torch.sigmoid(logits).tolist()
+        return probs
 
 actor_feedback_module = TensorDictModule(
     module=SigmoidModule(),
-    in_keys=["logits"],
+    in_keys=["logits", "observation", "actor_cat_input"],
     out_keys=[("next", "actor_prev_output")],
 )
 
