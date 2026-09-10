@@ -6,6 +6,11 @@ from torch.distributions import Bernoulli, Independent
 from tensordict.nn import TensorDictModule, TensorDictSequential
 import torch
 from torchrl.data import UnboundedContinuous
+import gymnasium as gym
+from gymnasium.spaces import Box
+import numpy as np
+
+from util import normalize
 
 MAX_X = 928
 MIN_X = 93
@@ -23,6 +28,19 @@ threshold = 0.3
 input_size = 36
 num_layers = 2
 num_blocks= 1
+
+class NormalizeObs(gym.ObservationWrapper):
+    def __init__(self, env):
+            super().__init__(env)
+
+            # Set obs space
+            mins = np.array([-np.inf] * 16 + [0] * 10, dtype=np.float32)
+            maxs = np.array([np.inf] * 16 + [1] * 10, dtype=np.float32)
+    
+            self.observation_space = Box(low=mins, high=maxs, dtype=np.float32)
+
+    def observation(self, observation):
+        return normalize(observation)
 
 class InitZeroState(Transform):
     def __init__(self, keys: list[str], feature_dims: list[int]):
@@ -89,15 +107,32 @@ class IndependentBernoulli(Independent):
         base_dist = Bernoulli(probs=probs, logits=logits)
         super().__init__(base_dist, reinterpreted_batch_ndims=1)
 
-def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
+class InputCat(nn.Module):
+    def forward(self, observation, actor_prev_output_clean):
+        catInp = torch.cat((observation, actor_prev_output_clean),-1)
+        return catInp
+
+def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=None):
+    reset_prev_out = TensorDictModule(
+        module=MaskInitState(),
+        in_keys=[f"{prefix}_prev_output", "is_init"],
+        out_keys=[f"{prefix}_prev_output_clean"],
+    )
+
+    cat_module = TensorDictModule(
+        module=InputCat(),
+        in_keys=["observation", f"{prefix}_prev_output_clean"],
+        out_keys=f"{prefix}_cat_input",
+    )
+
     input_mlp = TensorDictModule(
                 module=nn.Sequential(
                     nn.Linear(input_size, 4*input_size),
                     nn.ReLU(),
                     nn.Linear(4 * input_size, hidden_size)
                 ),
-                in_keys=["observation"],
-                out_keys=[f"{prefix}_embed"],
+                in_keys=[f"{prefix}_cat_input"],
+                out_keys=[f"{prefix}_embed"]
             )
     LSTM = LSTMModule(
                 input_size=hidden_size,
@@ -108,14 +143,17 @@ def recurrent_body(prefix, state_dict_mlp=None, state_dict_lstm=None):
                 out_keys=[f"{prefix}_features", ("next", f"{prefix}_rs"), ("next", f"{prefix}_rc")],
                 recurrent_backend="auto",
             )
+
     if state_dict_lstm != None:
         LSTM.lstm.load_state_dict(state_dict_lstm)
     if state_dict_mlp != None:
         input_mlp.module.load_state_dict(state_dict_mlp)
 
     return TensorDictSequential(
+        reset_prev_out,
+        cat_module,
         input_mlp,
-        LSTM
+        LSTM,
     )
 
 def transpose_weights_nn_to_rl(checkpoint, model):
@@ -125,15 +163,27 @@ def transpose_weights_nn_to_rl(checkpoint, model):
         module=action_head_net,
         in_keys=["actor_features"],
         out_keys=["action_head_out"]
-    )
+        )
 
     # Output layer
-    lin_out_layer = nn.Linear(hidden_size, out_size)
-    fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer, nn.Sigmoid())
+    lin_out_layer = nn.Linear(hidden_size, 10)
+    fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer)
+
     fc_out_pol = TensorDictModule(
         module=fc_out_pol_net,
         in_keys=["action_head_out"],
-        out_keys=["probs"]
+        out_keys=["logits"]
+    )
+
+    class SigmoidModule(nn.Module):
+        def forward(self, logits):
+            probs = torch.sigmoid(logits)
+            return probs
+
+    actor_feedback_module = TensorDictModule(
+        module=SigmoidModule(),
+        in_keys=["logits"],
+        out_keys=[("next", "actor_prev_output")],
     )
 
     actor_rec = recurrent_body("actor")
@@ -142,9 +192,10 @@ def transpose_weights_nn_to_rl(checkpoint, model):
         module=TensorDictSequential(
             actor_rec,
             action_head,
-            fc_out_pol
+            fc_out_pol,
+            actor_feedback_module
         ),
-        in_keys=["probs"],
+        in_keys=["logits"],
         distribution_class=IndependentBernoulli,
         return_log_prob=True,
     )
@@ -157,12 +208,12 @@ def transpose_weights_nn_to_rl(checkpoint, model):
 
     # A. Input MLP (actor_rec -> input_mlp -> inner nn.Sequential)
     model.input_mlp.load_state_dict(
-        policy_module.module[0][0].module[0].module.state_dict()
+        policy_module.module[0][0].module[2].module.state_dict()
     )
 
     # B. LSTM Core (actor_rec -> LSTMModule -> inner nn.LSTM)
     model.lstm.load_state_dict(
-        policy_module.module[0][0].module[1].lstm.state_dict()
+        policy_module.module[0][0].module[3].lstm.state_dict()
     )
 
     # C. Residual Blocks (action_head -> inner nn.Sequential)

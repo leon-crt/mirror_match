@@ -16,12 +16,12 @@ num_layers = 2
 model = LSTM(input_size=in_size, output_size=out_size, num_layers=num_layers, hidden_size=hidden_size)
 hidden = torch.zeros([num_layers, 1, hidden_size])
 memory = torch.zeros([num_layers, 1, hidden_size])
-threshold = 0.49
-RL_weights = False
+threshold = 0.1
+RL_weights = True
 autoreg = True
 
 device = torch.device("cpu")
-ch_path = 'checkpoints/saved/Harmonaz_base_249'
+ch_path = 'checkpoints/RL/Harmonaz/checkpoint_260'
 checkpoint = torch.load(ch_path, map_location=device) 
 if RL_weights:
     model = transpose_weights_nn_to_rl(checkpoint, model)
@@ -40,6 +40,11 @@ out = torch.zeros((10,))
 while(True):
     state = normalize(state)
     state = torch.tensor(state, dtype=torch.float32)
+    if done:
+        hidden = torch.zeros([num_layers, 1, hidden_size])
+        memory = torch.zeros([num_layers, 1, hidden_size])
+        out = torch.zeros((10,))
+
     if autoreg:
         state = torch.concat((state, out))
     out, hidden, memory = model(state.unsqueeze(0).unsqueeze(0), hidden, memory, act_last_layer=True)

@@ -16,7 +16,7 @@ from util import avg, save_checkpoint, EarlyStopping, ComputeMetrics
 checkpoint_dir = 'checkpoints/'
 loss_plots_dir = 'plots/'
 
-full_dataset = MatchDataset('data/Makoto2/', autoregressive=True)
+full_dataset = MatchDataset('data/Ken3/', autoregressive=True)
 dataset_train, dataset_val = torch.utils.data.random_split(full_dataset, [0.8, 0.2])
 
 
@@ -27,7 +27,7 @@ lstm_layers = 2
 learning_rate = 1e-4
 nepochs = 1000  # Maybe use loss threshold to stop automatically
 batch_size = 64
-positive_weights = torch.tensor([np.float64(2.9226014981326007), np.float64(11.15064121487457), np.float64(2.639903487231234), np.float64(3.260643682218815), np.float64(33.34075440214289), np.float64(35.64161551796842), np.float64(41.13497553932027), np.float64(33.98286736747931), np.float64(38.89480987215982), np.float64(86.31070670983588)])
+positive_weights = torch.tensor([np.float64(2.9068644741691223), np.float64(25.93919500017512), np.float64(2.6354144402227715), np.float64(2.9803825286171977), np.float64(19.20506459163957), np.float64(17.618282259409273), np.float64(16.31062938077174), np.float64(21.352759973522335), np.float64(31.67367099481283), np.float64(34.0295415443781)])
 positive_weights = torch.sqrt(positive_weights)
 
 dl_train = DataLoader(dataset_train, batch_size, collate_fn=pad_collate)
@@ -52,7 +52,7 @@ avg_val_rec = []
 avg_macro_prec, avg_macro_rec, avg_macro_acc = [], [], []
 
 # initialize early stopping
-es = EarlyStopping(min_delta=0.01, tolerance=5)
+es = EarlyStopping(min_delta=0.001, tolerance=5)
 
 # seq have shape [batch_size, seq_len, feat_num]
 # Run training loop for each epoch

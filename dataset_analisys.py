@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 from data_preprocessing import MatchDataset
 
 # arguments
-path = './data/Akuma1/'
-flatten_folders = True
+path = './data/Ken3/'
+flatten_folders = False
 
 if flatten_folders:
     files = os.listdir(path)
