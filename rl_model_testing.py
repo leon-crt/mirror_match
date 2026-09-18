@@ -40,19 +40,18 @@ class IndependentBernoulli(Independent):
         base_dist = Bernoulli(probs=probs, logits=logits)
         super().__init__(base_dist, reinterpreted_batch_ndims=1)
 
-ch_path = 'checkpoints/RL/Harmonaz/checkpoint_220'
+ch_path = 'checkpoints/checkpoint_final'
+rl_weights = False
 
 # For a complete training, bring the number of frames up to 1M
-total_frames = 1_500_000
+total_frames = 10000
 
-sub_batch_size = 500  # cardinality of the sub-samples gathered from the current data in the inner loop
-num_epochs = 10  # optimization steps per batch of data collected
 clip_epsilon = (
     0.2  # clip value for PPO loss: see the equation in the intro for more context.
 )
 gamma = 0.99
 lmbda = 0.85
-entropy_eps = 0.0        
+entropy_eps = 0.0
 
 is_fork = multiprocessing.get_start_method() == "fork"
 device = (
@@ -69,8 +68,12 @@ actor_output_size = 10
 num_blocks = 1
 
 # Load pre trained weights to actor and transfer them to each individual component of the model
-
 checkpoint = torch.load(ch_path, map_location=device)
+
+pretrained_actor = None
+if not rl_weights:
+    pretrained_actor = LSTM(input_size, output_size=actor_output_size, hidden_size=hidden_size, num_layers=num_layers).to(device)
+    pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
 base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="free")
@@ -83,7 +86,7 @@ torch_env = GymWrapper(base_env)
 env = TransformedEnv(
     torch_env,
     Compose(
-        InitZeroState(keys=["actor_prev_output", "critic_prev_output"], feature_dims=[actor_output_size, 1]),
+        InitZeroState(keys=["actor_prev_output"], feature_dims=[actor_output_size]),
         InitTracker(),
         StepCounter(),
     ),
@@ -94,7 +97,6 @@ print("reward_spec:", env.reward_spec)
 print("input_spec:", env.input_spec)
 print("action_spec (as defined by input_spec):", env.action_spec)
 
-check_env_specs(env)
 # Set up Actor and Critic networks
 # The models have to be dissected into their individual components so that they can interact with Tensordict nicely
 
@@ -106,13 +108,13 @@ class InputCat(nn.Module):
 def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=None):
     reset_prev_out = TensorDictModule(
         module=MaskInitState(),
-        in_keys=[f"{prefix}_prev_output", "is_init"],
-        out_keys=[f"{prefix}_prev_output_clean"],
+        in_keys=[f"actor_prev_output", "is_init"],
+        out_keys=[f"actor_prev_output_clean"],
     )
 
     cat_module = TensorDictModule(
         module=InputCat(),
-        in_keys=["observation", f"{prefix}_prev_output_clean"],
+        in_keys=["observation", "actor_prev_output_clean"],
         out_keys=f"{prefix}_cat_input",
     )
 
@@ -148,6 +150,14 @@ def recurrent_body(prefix, input_size=36, state_dict_mlp=None, state_dict_lstm=N
     )
 
 action_head_net = nn.Sequential(*[ResBlockMLP(hidden_size, hidden_size) for _ in range(num_blocks)])
+lin_out_layer = nn.Linear(hidden_size, actor_output_size)
+actor_rec = None
+if not rl_weights:
+    action_head_net.load_state_dict(pretrained_actor.res_blocks.state_dict())
+    lin_out_layer.load_state_dict(pretrained_actor.fc_out.state_dict())
+    actor_rec = recurrent_body("actor", state_dict_mlp=pretrained_actor.input_mlp.state_dict(), state_dict_lstm=pretrained_actor.lstm.state_dict())
+else:
+    actor_rec = recurrent_body("actor")
 
 action_head = TensorDictModule(
     module=action_head_net,
@@ -156,27 +166,24 @@ action_head = TensorDictModule(
 )
 
 # Output layer
-lin_out_layer = nn.Linear(hidden_size, actor_output_size)
-fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer)
+fc_out_pol_net = nn.Sequential(nn.ReLU(), lin_out_layer, nn.Sigmoid())
 
 fc_out_pol = TensorDictModule(
     module=fc_out_pol_net,
     in_keys=["action_head_out"],
-    out_keys=["logits"]
+    out_keys=["probs"]
 )
 
-class SigmoidModule(nn.Module):
-    def forward(self, logits):
-        probs = torch.sigmoid(logits).tolist()
+class DebugModule(nn.Module):
+    def forward(self, probs, observation, actor_prev_output_clean, actor_cat_input):
+        probs = probs
         return probs
 
 actor_feedback_module = TensorDictModule(
-    module=SigmoidModule(),
-    in_keys=["logits"],
+    module=DebugModule(),
+    in_keys=["probs", "observation", "actor_prev_output_clean", "actor_cat_input"],
     out_keys=[("next", "actor_prev_output")],
 )
-
-actor_rec = recurrent_body("actor")
 
 policy_module = ProbabilisticActor(
     module=TensorDictSequential(
@@ -186,12 +193,23 @@ policy_module = ProbabilisticActor(
         actor_feedback_module
     ),
     spec=env.action_spec,
-    in_keys=["logits"],
+    in_keys=["probs"],
     distribution_class=IndependentBernoulli,
     return_log_prob=True,
 )
 
-policy_module.load_state_dict(checkpoint["model_state_dict"])
+if rl_weights:
+    policy_module.load_state_dict(checkpoint["model_state_dict"])
 
-while(True):
-    env.rollout(total_frames)
+collector = Collector(
+    env,
+    policy_module,
+    frames_per_batch=total_frames,
+    total_frames=total_frames,
+    split_trajs=False,
+    device=device,
+    auto_register_policy_transforms=True,
+)
+
+for i, tensordict_data in enumerate(collector):
+    break
