@@ -1,7 +1,5 @@
-import warnings
+import sys
 
-import torch.optim.adam
-warnings.filterwarnings("ignore")
 from torch import multiprocessing
 import numpy as np
 
@@ -13,38 +11,44 @@ import torch.nn as nn
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
-from torchrl.envs import (Compose, DoubleToFloat, ObservationNorm, StepCounter,
+from torchrl.envs import (Compose, StepCounter,
                           TransformedEnv, InitTracker)
-from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
 from torchrl.collectors import Collector
 from tensordict.nn import TensorDictModule, TensorDictSequential 
-from torchrl.modules import ProbabilisticActor, ValueOperator, LSTMModule, set_recurrent_mode
-from torchrl.objectives import ClipPPOLoss
-from torchrl.objectives.value import GAE
-from tqdm import tqdm
-import copy
+from torchrl.modules import ProbabilisticActor, LSTMModule
 from torch.distributions import Bernoulli, Independent
 import gymnasium
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.envs import GymWrapper
-from torchrl.envs.transforms import CatTensors
 
 from model import LSTM, ResBlockMLP
-import SF3_environment
+from SF3_environment.envs import SF3Env
 from SF3_environment.wrappers import FlattenObservation
 from util import EarlyStopping, SelfPlayLSTMWrapper, format_pred
 from rl_util import transpose_weights_nn_to_rl, MaskInitState, InitZeroState, NormalizeObs
+
+
 
 class IndependentBernoulli(Independent):
     def __init__(self, probs=None, logits=None):
         base_dist = Bernoulli(probs=probs, logits=logits)
         super().__init__(base_dist, reinterpreted_batch_ndims=1)
 
-ch_path = 'checkpoints/checkpoint_final'
+
+ch_path = 'checkpoints/saved/Neon00_base_169'
+characterP1 = "char"
+characterP2 = "select"
 rl_weights = False
+# parse cmdline arguments
+if len(sys.argv) > 1:
+    ch_path = sys.argv[1]
+    characterP1 = sys.argv[2]
+    characterP2 = sys.argv[3]
+    rl_weights = bool(int(sys.argv[4]))
+
 
 # For a complete training, bring the number of frames up to 1M
-total_frames = 10000
+total_frames = 7200
 
 clip_epsilon = (
     0.2  # clip value for PPO loss: see the equation in the intro for more context.
@@ -76,7 +80,7 @@ if not rl_weights:
     pretrained_actor.load_state_dict(checkpoint['model_state_dict'])
 
 # Setting up the environment, adding flattenObservation wrapper to obtain a flat array and other wrappers for normalization and minor utils
-base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="free")
+base_env = gymnasium.make("SF3_environment/StreetFighter3-v0", render_mode="human", mode="free", P1_ch=characterP1, P2_ch=characterP2)
 base_env = FlattenObservation(base_env)
 base_env = NormalizeObs(base_env)
 # Create and load opponent model
@@ -212,4 +216,4 @@ collector = Collector(
 )
 
 for i, tensordict_data in enumerate(collector):
-    break
+    pass
